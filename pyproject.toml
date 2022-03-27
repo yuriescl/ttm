@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "startstop"
+version = "0.1.0"
+description = "Tiny process manager written in Python"
+authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
+license = "MIT License"
+homepage = "https://github.com/yuriescl/startstop"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

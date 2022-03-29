@@ -8,32 +8,84 @@ from os.path import join, abspath
 import asyncio
 from pathlib import Path
 import subprocess
+import shutil
 import signal
+import fcntl
 
-if True:  # TODO if linux
-    CACHE_DIR = Path.home() / ".startstop"
-    os.makedirs(CACHE_DIR, exist_ok=True)
 
+
+# TODO raise error if OS is not unix
+CACHE_DIR = Path.home() / ".startstop"
+os.makedirs(CACHE_DIR, exist_ok=True)
+LOCK_PATH = Path(CACHE_DIR / "lock")
+LOCK_PATH.touch(exist_ok=True)
+
+
+class StartstopException(Exception):
+    pass
+
+class AtomicOpen:
+    """ https://stackoverflow.com/a/46407326/3705710 """
+    def __init__(self, path, *args, noop=False, **kwargs):
+        if noop is False:
+            self.file = open(path,*args, **kwargs)
+            self.lock_file(self.file)
+        self.noop = noop
+
+    def lock_file(self, f):
+        if f.writable():
+            fcntl.lockf(f, fcntl.LOCK_EX)
+
+    def unlock_file(self, f):
+        if f.writable():
+            fcntl.lockf(f, fcntl.LOCK_UN)
+
+    def __enter__(self, *args, **kwargs):
+        if self.noop is False:
+            return self.file
+
+    def __exit__(self, exc_type=None, exc_value=None, traceback=None):
+        if self.noop is False:
+            self.file.flush()
+            os.fsync(self.file.fileno())
+            self.unlock_file(self.file)
+            self.file.close()
+            if (exc_type is not None):
+                return False
+            else:
+                return True
+
+class bcolors:
+    """ https://stackoverflow.com/a/287944/3705710 """
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 def arg_requires_value(arg: str, option=None):
     if option is None:
         if arg in ["v", "verbose"]:
             return False
-        raise ValueError(f"Unrecognized argument --{arg}")
+        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "run":
-        if arg in ["a", "attach"]:
+        if arg in ["a", "attach", "split-output"]:
             return False
         if arg in ["n", "name"]:
             return True
-        raise ValueError(f"Unrecognized argument --{arg}")
+        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "start":
-        if arg in ["a", "attach"]:
-            return False
-        raise ValueError(f"Unrecognized argument --{arg}")
+        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "stop":
         if arg in ["k"]:
             return False
-        raise ValueError(f"Unrecognized argument --{arg}")
+        raise StartstopException(f"Unrecognized argument --{arg}")
+    elif option == "rm":
+        raise StartstopException(f"Unrecognized argument --{arg}")
 
 
 def is_value_next(args: List[str], pos: int):
@@ -49,7 +101,7 @@ def parse_args(argv: List[str]):
         if pos >= len(args):
             break
         current_arg = args[pos]
-        if current_arg in ["run", "start", "stop"]:
+        if current_arg in ["run", "start", "stop", "rm"]:
             option = current_arg
             pos += 1
             break
@@ -57,7 +109,7 @@ def parse_args(argv: List[str]):
             current_arg = current_arg[2:]
             if arg_requires_value(current_arg, option):
                 if not is_value_next(args, pos):
-                    raise ValueError(f"Argument --{current_arg} requires a value")
+                    raise StartstopException(f"Argument --{current_arg} requires a value")
                 global_args[current_arg] = args[pos + 1]
                 pos += 2
                 continue
@@ -70,7 +122,7 @@ def parse_args(argv: List[str]):
             if len(current_arg) == 1:
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise ValueError(f"Argument -{current_arg} requires a value")
+                        raise StartstopException(f"Argument -{current_arg} requires a value")
                     global_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -81,14 +133,14 @@ def parse_args(argv: List[str]):
             else:
                 for letter in current_arg:
                     if arg_requires_value(letter, option):
-                        raise ValueError(
+                        raise StartstopException(
                             f"Argument -{letter} cannot be grouped with other arguments"
                         )
                     global_args[letter] = True
                     pos += 1
                     continue
         else:
-            raise ValueError(f"Unrecognized option {current_arg}")
+            raise StartstopException(f"Unrecognized option {current_arg}")
         pos += 1
 
     option_args = {}
@@ -96,7 +148,7 @@ def parse_args(argv: List[str]):
 
     if option is not None:
         if pos >= len(args):
-            raise ValueError(f"Missing arguments for option '{option}'")
+            raise StartstopException(f"Missing arguments for option '{option}'")
         while True:
             if pos >= len(args):
                 break
@@ -105,7 +157,7 @@ def parse_args(argv: List[str]):
                 current_arg = current_arg[2:]
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise ValueError(f"Argument --{current_arg} requires a value")
+                        raise StartstopException(f"Argument --{current_arg} requires a value")
                     option_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -118,7 +170,7 @@ def parse_args(argv: List[str]):
                 if len(current_arg) == 1:
                     if arg_requires_value(current_arg, option):
                         if not is_value_next(args, pos):
-                            raise ValueError(
+                            raise StartstopException(
                                 f"Argument -{current_arg} requires a value"
                             )
                         option_args[current_arg] = args[pos + 1]
@@ -133,7 +185,7 @@ def parse_args(argv: List[str]):
                         if arg_requires_value(letter, option) and not is_value_next(
                             args, pos
                         ):
-                            raise ValueError(
+                            raise StartstopException(
                                 f"Argument -{letter} cannot be grouped with other arguments"
                             )
                         option_args[letter] = True
@@ -146,43 +198,59 @@ def parse_args(argv: List[str]):
     return global_args, option, option_args, command
 
 
-def get_process_by_name(name: str) -> Dict:
-    for filename in os.listdir(CACHE_DIR):
-        if filename.split("-")[0] == name:
-            path = abspath(join(CACHE_DIR, filename, "process.json"))
-            with open(path) as f:
-                return json.load(f)
-    return None
-
-
-def get_process_by_id(identifier: str) -> Dict:
-    for filename in os.listdir(CACHE_DIR):
-        try:
-            if filename.split("-")[1] == identifier:
+def find_process_by_name(name: str, lock=True) -> Dict:
+    with AtomicOpen(LOCK_PATH, noop=not lock):
+        for filename in os.listdir(CACHE_DIR):
+            if filename.split("-")[0] == name:
                 path = abspath(join(CACHE_DIR, filename, "process.json"))
                 with open(path) as f:
                     return json.load(f)
-        except IndexError as e:
-            pass
-    return None
+        return None
 
 
-def create_process_cache(proc_info: Dict):
+def find_process_by_id(identifier: str, lock=True) -> Dict:
+    with AtomicOpen(LOCK_PATH, noop=not lock):
+        for filename in os.listdir(CACHE_DIR):
+            try:
+                if filename.split("-")[1] == identifier:
+                    path = abspath(join(CACHE_DIR, filename, "process.json"))
+                    with open(path) as f:
+                        return json.load(f)
+            except IndexError as e:
+                pass
+        return None
+
+
+def create_process_cache(proc_info: Dict, split_output=False):
     dirname = f"{proc_info['name']}-{proc_info['id']}"
     dirpath = CACHE_DIR / dirname
     os.makedirs(dirpath, exist_ok=True)
     filepath = dirpath / "process.json"
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    stdoutpath = dirpath / f"{dirname}-{timestamp}.out"
-    stderrpath = dirpath / f"{dirname}-{timestamp}.err"
+    if split_output:
+        stdoutpath = dirpath / f"{dirname}-{timestamp}.out"
+        stderrpath = dirpath / f"{dirname}-{timestamp}.err"
+    else:
+        logspath = dirpath / f"{dirname}-{timestamp}.log"
     shellpath = str(dirpath / proc_info["id"])
     try:
         os.symlink("/bin/sh", shellpath)
     except FileExistsError:
         pass
+    if split_output:
+        proc_info.update({
+            "shell": str(shellpath),
+            "stdout": str(stdoutpath),
+            "stderr": str(stderrpath),
+        })
+    else:
+        proc_info.update({
+            "shell": str(shellpath),
+            "logs": str(logspath),
+        })
     with open(filepath, "w") as f:
         json.dump(proc_info, f)
-    return shellpath, stdoutpath, stderrpath
+    return proc_info
 
 
 def update_process_cache(proc_info: Dict):
@@ -212,43 +280,105 @@ def generate_id():
 def generate_name():
     return "test_name"
 
-
-async def run(command: List[str], name=None, attached=False):
-    proc_id = generate_id()
-    if name is None:
-        name = generate_name()
-    info = {
-        "id": proc_id,
-        "name": name,
-        "command": command,
-    }
-    shellpath, stdoutpath, stderrpath = create_process_cache(info)
-    command = [shellpath, "-c"] + command
-    if attached:
-        proc = await asyncio.create_subprocess_shell(*command)
-    else:
-        with open(stdoutpath, "wb") as stdout:
-            with open(stderrpath, "wb") as stderr:
-                proc = subprocess.Popen(
-                    command,
-                    start_new_session=True,
-                    stdout=stdout,
-                    stderr=stderr,
-                )
-    info["pid"] = str(proc.pid)
-    info["shellpath"] = shellpath
-    update_process_cache(info)
-    return proc
-
-def is_process_running(pid: str, shellpath: str):
+def is_process_running(proc_info):
     output = subprocess.check_output(['ps', '-u' , str(os.getuid()), '-o', 'pid,args'])
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(' ', 1)
-        if ps_pid == pid:
-            if cmdline.startswith(shellpath):
+        if ps_pid == proc_info["pid"]:
+            if cmdline.startswith(proc_info["shell"]):
                 return True
     return False
+
+def remove_process_by_name(name: str):
+    with AtomicOpen(LOCK_PATH):
+        for filename in os.listdir(CACHE_DIR):
+            if filename.split("-")[0] == name:
+                proc_info = find_process_by_name(name, lock=False)
+                if is_process_running(proc_info):
+                    raise StartstopException(
+                        "Cannot remove process while it's running.\n"
+                        "To stop it, run:\n"
+                        f"startstop stop {name}"
+                    )
+                dirpath = abspath(join(CACHE_DIR, filename))
+                shutil.rmtree(dirpath)
+                return True
+        return False
+
+def remove_process_by_id(identifier: str):
+    with AtomicOpen(LOCK_PATH):
+        for filename in os.listdir(CACHE_DIR):
+            try:
+                if filename.split("-")[1] == identifier:
+                    proc_info = find_process_by_id(identifier, lock=False)
+                    if is_process_running(proc_info):
+                        raise StartstopException(
+                            "Cannot remove process while it's running.\n"
+                            "To stop it, run:\n"
+                            f"startstop stop {identifier}"
+                        )
+                    dirpath = abspath(join(CACHE_DIR, filename))
+                    shutil.rmtree(dirpath)
+                    return True
+            except IndexError as e:
+                pass
+        return False
+
+async def run(command: List[str], name=None, attached=False, split_output=False):
+    with AtomicOpen(LOCK_PATH):
+        if name is not None:
+            proc_info = find_process_by_name(name)
+            if proc_info:
+                if is_process_running(proc_info):
+                    raise StartstopException(f"A process with this name already exists with PID {proc_info.get('pid')}")
+                raise StartstopException(
+                    "A process with this name already exists but it's not running.\n"
+                    "To remove it, run:\n"
+                    f"startstop rm {name}"
+                )
+        else:
+            name = generate_name()
+        proc_id = generate_id()
+        info = {
+            "id": proc_id,
+            "name": name,
+            "command": command,
+        }
+        if split_output:
+            proc_info = create_process_cache(info, split_output=split_output)
+            shellpath = proc_info["shell"]
+            stdoutpath = proc_info["stdout"]
+            stderrpath = proc_info["stderr"]
+        else:
+            proc_info = create_process_cache(info, split_output=split_output)
+            shellpath = proc_info["shell"]
+            logspath = proc_info["logs"]
+        command = [shellpath, "-c"] + command
+        if not attached:
+            if split_output:
+                with open(stdoutpath, "wb") as stdout:
+                    with open(stderrpath, "wb") as stderr:
+                        proc = subprocess.Popen(
+                            command,
+                            start_new_session=True,
+                            stdout=stdout,
+                            stderr=stderr,
+                        )
+            else:
+                with open(logspath, "wb") as output:
+                    proc = subprocess.Popen(
+                        command,
+                        start_new_session=True,
+                        stdout=output,
+                        stderr=output,
+                    )
+            info["pid"] = str(proc.pid)
+            update_process_cache(info)
+            return proc_info
+    if attached:
+        await asyncio.create_subprocess_shell(*command)
+
 
 async def run_attached(command: List[str], name=None):
     proc = await run(command, name=name, attached=True)
@@ -257,26 +387,60 @@ async def run_attached(command: List[str], name=None):
     await proc.wait()
 
 
+def print_error(msg: str, *args, **kwargs):
+    print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
+
+def print_warning(msg: str, *args, **kwargs):
+    print(f"{bcolors.WARNING}{msg}{bcolors.ENDC}", *args, **kwargs)
+
+def print_success(msg: str, *args, **kwargs):
+    print(f"{bcolors.OKGREEN}{msg}{bcolors.ENDC}", *args, **kwargs)
+
 def main():
-    if len(sys.argv) == 1:
-        sys.exit(1)
     try:
+        if len(sys.argv) == 1:
+            sys.exit(1)
         global_args, option, option_args, command = parse_args(sys.argv)
-    except ValueError as e:
-        print(str(e), file=sys.stderr)
+        #print(global_args, option, option_args, command)
+        if option == "run":
+            name = option_args.get("n") or option_args.get("name") or None
+            attached = option_args.get("a") or option_args.get("attached")
+            if attached:
+                asyncio.run(run_attached(command, name=name))
+            else:
+                proc_info = asyncio.run(run(command, name=name))
+                print_success(proc_info["id"])
+        elif option == "rm":
+            errors = False
+            for c in command:
+                try:
+                    identifier = str(int(c))
+                    name = None
+                except (ValueError, TypeError):
+                    identifier = None
+                    name = c
+
+                if identifier is not None:
+                    result = remove_process_by_id(identifier)
+                    if result is True:
+                        print_success(identifier)
+                    else:
+                        print_error(f"No process with ID {identifier}", file=sys.stderr)
+                        errors = True
+                else:
+                    result = remove_process_by_name(name)
+                    if result is True:
+                        print_success(name)
+                    else:
+                        print_error(f"No process with name {name}", file=sys.stderr)
+                        errors = True
+            if errors is True:
+                sys.exit(1)
+
+    except StartstopException as e:
+        print_error(str(e))
         sys.exit(1)
-    print(global_args, option, option_args, command)
-
-
-    if option == "run":
-        name = option_args.get("n") or option_args.get("name") or None
-        attached = option_args.get("a") or option_args.get("attached")
-        if attached:
-            asyncio.run(run_attached(command, name=name))
-        else:
-            asyncio.run(run(command, name=name))
-        proc_info = get_process_by_name("test1")
-        print(is_process_running(proc_info["pid"], proc_info["shellpath"]))
+        #print(is_process_running(proc_info["pid"], proc_info["shell"]))
 
 
 if __name__ == "__main__":

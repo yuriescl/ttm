@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Tiny process manager written in Python"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
-homepage = "https://github.com/yuriescl/startstop"
+homepage = "https://github.com/yuriescl/startstop-python"
 packages = [
     { include = "startstop.py" }
 ]

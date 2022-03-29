@@ -11,3 +11,5 @@ poetry shell
 
 Todo:
     - update project description
+    - allow matching partial id
+    - add "rm" option

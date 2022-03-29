@@ -5,6 +5,12 @@ description = "Tiny process manager written in Python"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
 homepage = "https://github.com/yuriescl/startstop"
+packages = [
+    { include = "startstop.py" }
+]
+
+[tool.poetry.scripts]
+startstop = 'startstop:main'
 
 [tool.poetry.dependencies]
 python = "^3.7"

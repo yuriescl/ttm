@@ -12,4 +12,4 @@ poetry shell
 Todo:
     - update project description
     - allow matching partial id
-    - add "rm" option
+    - add "rm" option, remove cache folder

@@ -1,6 +1,11 @@
 **This project is a Work In Progress. First version will be available soon.**
 
-Tiny process manager for Linux/Unix systems. Written in Python.
+Tiny process manager for Linux/Unix.  
+Written in Python, compiled to a ~300K standalone executable binary.
+
+Features
+- No root access required
+- Start, watch, and stop processes easily
 
 How to setup development environment:
 ```

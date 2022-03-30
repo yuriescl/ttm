@@ -197,22 +197,22 @@ def parse_args(argv: List[str]):
     return global_args, option, option_args, command
 
 
-def find_process_by_name(name: str, lock=True) -> Dict:
+def find_task_by_name(name: str, lock=True) -> Dict:
     with AtomicOpen(LOCK_PATH, noop=not lock):
         for filename in os.listdir(CACHE_DIR):
             if filename.split("-")[0] == name:
-                path = abspath(join(CACHE_DIR, filename, "process.json"))
+                path = abspath(join(CACHE_DIR, filename, "task.json"))
                 with open(path) as f:
                     return json.load(f)
         return None
 
 
-def find_process_by_id(identifier: str, lock=True) -> Dict:
+def find_task_by_id(task_id: str, lock=True) -> Dict:
     with AtomicOpen(LOCK_PATH, noop=not lock):
         for filename in os.listdir(CACHE_DIR):
             try:
-                if filename.split("-")[1] == identifier:
-                    path = abspath(join(CACHE_DIR, filename, "process.json"))
+                if filename.split("-")[1] == task_id:
+                    path = abspath(join(CACHE_DIR, filename, "task.json"))
                     with open(path) as f:
                         return json.load(f)
             except IndexError as e:
@@ -220,44 +220,44 @@ def find_process_by_id(identifier: str, lock=True) -> Dict:
         return None
 
 
-def create_process_cache(proc_info: Dict, split_output=False):
-    dirname = f"{proc_info['name']}-{proc_info['id']}"
+def create_task_cache(task: Dict, split_output=False):
+    dirname = f"{task['name']}-{task['id']}"
     dirpath = CACHE_DIR / dirname
     os.makedirs(dirpath, exist_ok=True)
-    filepath = dirpath / "process.json"
+    filepath = dirpath / "task.json"
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     if split_output:
         stdoutpath = dirpath / f"{dirname}-{timestamp}.out"
         stderrpath = dirpath / f"{dirname}-{timestamp}.err"
     else:
         logspath = dirpath / f"{dirname}-{timestamp}.log"
-    shellpath = str(dirpath / proc_info["id"])
+    shellpath = str(dirpath / task["id"])
     try:
         os.symlink("/bin/sh", shellpath)
     except FileExistsError:
         pass
     if split_output:
-        proc_info.update({
+        task.update({
             "shell": str(shellpath),
             "stdout": str(stdoutpath),
             "stderr": str(stderrpath),
         })
     else:
-        proc_info.update({
+        task.update({
             "shell": str(shellpath),
             "logs": str(logspath),
         })
     with open(filepath, "w") as f:
-        json.dump(proc_info, f)
-    return proc_info
+        json.dump(task, f)
+    return task
 
 
-def update_process_cache(proc_info: Dict):
-    dirname = f"{proc_info['name']}-{proc_info['id']}"
+def update_task_cache(task: Dict):
+    dirname = f"{task['name']}-{task['id']}"
     dirpath = CACHE_DIR / dirname
-    filepath = dirpath / "process.json"
+    filepath = dirpath / "task.json"
     with open(filepath, "w") as f:
-        json.dump(proc_info, f)
+        json.dump(task, f)
 
 
 def signal_handler(process):
@@ -279,24 +279,24 @@ def generate_id():
 def generate_name():
     return "test_name"
 
-def is_process_running(proc_info):
+def is_task_running(task):
     output = subprocess.check_output(['ps', '-u' , str(os.getuid()), '-o', 'pid,args'])
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(' ', 1)
-        if ps_pid == proc_info["pid"]:
-            if cmdline.startswith(proc_info["shell"]):
+        if ps_pid == task["pid"]:
+            if cmdline.startswith(task["shell"]):
                 return True
     return False
 
-def remove_process_by_name(name: str):
+def remove_task_by_name(name: str):
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
             if filename.split("-")[0] == name:
-                proc_info = find_process_by_name(name, lock=False)
-                if is_process_running(proc_info):
+                task = find_task_by_name(name, lock=False)
+                if is_task_running(task):
                     raise StartstopException(
-                        "Cannot remove process while it's running.\n"
+                        "Cannot remove task while it's running.\n"
                         "To stop it, run:\n"
                         f"startstop stop {name}"
                     )
@@ -305,17 +305,17 @@ def remove_process_by_name(name: str):
                 return True
         return False
 
-def remove_process_by_id(identifier: str):
+def remove_task_by_id(task_id: str):
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
             try:
-                if filename.split("-")[1] == identifier:
-                    proc_info = find_process_by_id(identifier, lock=False)
-                    if is_process_running(proc_info):
+                if filename.split("-")[1] == task_id:
+                    task = find_task_by_id(task_id, lock=False)
+                    if is_task_running(task):
                         raise StartstopException(
-                            "Cannot remove process while it's running.\n"
+                            "Cannot remove task while it's running.\n"
                             "To stop it, run:\n"
-                            f"startstop stop {identifier}"
+                            f"startstop stop {task_id}"
                         )
                     dirpath = abspath(join(CACHE_DIR, filename))
                     shutil.rmtree(dirpath)
@@ -327,32 +327,31 @@ def remove_process_by_id(identifier: str):
 async def run(command: List[str], name=None, attached=False, split_output=False):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
-            proc_info = find_process_by_name(name)
-            if proc_info:
-                if is_process_running(proc_info):
-                    raise StartstopException(f"A process with this name already exists with PID {proc_info.get('pid')}")
+            task = find_task_by_name(name)
+            if task:
+                if is_task_running(task):
+                    raise StartstopException(f"A task with this name already exists with PID {task.get('pid')}")
                 raise StartstopException(
-                    "A process with this name already exists but it's not running.\n"
+                    "A task with this name already exists but it's not running.\n"
                     "To remove it, run:\n"
                     f"startstop rm {name}"
                 )
         else:
             name = generate_name()
-        proc_id = generate_id()
-        info = {
-            "id": proc_id,
+        task = {
+            "id": generate_id(),
             "name": name,
             "command": command,
         }
         if split_output:
-            proc_info = create_process_cache(info, split_output=split_output)
-            shellpath = proc_info["shell"]
-            stdoutpath = proc_info["stdout"]
-            stderrpath = proc_info["stderr"]
+            task = create_task_cache(task, split_output=split_output)
+            shellpath = task["shell"]
+            stdoutpath = task["stdout"]
+            stderrpath = task["stderr"]
         else:
-            proc_info = create_process_cache(info, split_output=split_output)
-            shellpath = proc_info["shell"]
-            logspath = proc_info["logs"]
+            task = create_task_cache(task, split_output=split_output)
+            shellpath = task["shell"]
+            logspath = task["logs"]
         command = [shellpath, "-c"] + command
         if not attached:
             if split_output:
@@ -372,9 +371,9 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
                         stdout=output,
                         stderr=output,
                     )
-            info["pid"] = str(proc.pid)
-            update_process_cache(info)
-            return proc_info
+            task["pid"] = str(proc.pid)
+            update_task_cache(task)
+            return task
     if attached:
         await asyncio.create_subprocess_shell(*command)
 
@@ -385,6 +384,48 @@ async def run_attached(command: List[str], name=None):
         signal.signal(sig, signal_handler(proc))
     await proc.wait()
 
+
+def start_task(task_id=None, name=None):
+    with AtomicOpen(LOCK_PATH):
+        if name is not None:
+            task = find_task_by_name(name)
+            if task is not None:
+                if is_task_running(task):
+                    raise StartstopException(f"A task with this name already exists with PID {task.get('pid')}")
+            else:
+                raise StartstopException(f"No task with name {name}")
+        else:
+            task = find_task_by_id(task_id)
+            if task is None:
+                raise StartstopException(f"No task with ID {task_id}")
+
+        dirname = f"{task['name']}-{task['id']}"
+        dirpath = CACHE_DIR / dirname
+        command = [task["shell"], "-c"] + task["command"]
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        if task.get("stdout") is not None:
+            task["stdout"] = str(dirpath / f"{dirname}-{timestamp}.out")
+            task["stderr"] = str(dirpath / f"{dirname}-{timestamp}.err")
+            with open(task["stdout"], "wb") as stdout:
+                with open(task["stderr"], "wb") as stderr:
+                    proc = subprocess.Popen(
+                        command,
+                        start_new_session=True,
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
+        else:
+            task["logs"] = str(dirpath / f"{dirname}-{timestamp}.log")
+            with open(task["logs"], "wb") as output:
+                proc = subprocess.Popen(
+                    command,
+                    start_new_session=True,
+                    stdout=output,
+                    stderr=output,
+                )
+        task["pid"] = str(proc.pid)
+        update_task_cache(task)
+        return task
 
 def print_error(msg: str, *args, **kwargs):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
@@ -407,39 +448,51 @@ def main():
             if attached:
                 asyncio.run(run_attached(command, name=name))
             else:
-                proc_info = asyncio.run(run(command, name=name))
-                print_success(proc_info["id"])
+                task = asyncio.run(run(command, name=name))
+                print_success(task["id"])
         elif option == "rm":
             errors = False
             for c in command:
                 try:
-                    identifier = str(int(c))
+                    task_id = str(int(c))
                     name = None
                 except (ValueError, TypeError):
-                    identifier = None
+                    task_id = None
                     name = c
 
-                if identifier is not None:
-                    result = remove_process_by_id(identifier)
+                if task_id is not None:
+                    result = remove_task_by_id(task_id)
                     if result is True:
-                        print_success(identifier)
+                        print_success(task_id)
                     else:
-                        print_error(f"No process with ID {identifier}", file=sys.stderr)
+                        print_error(f"No task with ID {task_id}", file=sys.stderr)
                         errors = True
                 else:
-                    result = remove_process_by_name(name)
+                    result = remove_task_by_name(name)
                     if result is True:
                         print_success(name)
                     else:
-                        print_error(f"No process with name {name}", file=sys.stderr)
+                        print_error(f"No task with name {name}", file=sys.stderr)
                         errors = True
             if errors is True:
                 sys.exit(1)
 
+        elif option == "start":
+            for c in command:
+                try:
+                    task_id = str(int(c))
+                    name = None
+                except (ValueError, TypeError):
+                    task_id = None
+                    name = c
+
+                task = start_task(task_id=task_id, name=name)
+                print_success(task["id"])
+
     except StartstopException as e:
         print_error(str(e))
         sys.exit(1)
-        #print(is_process_running(proc_info["pid"], proc_info["shell"]))
+        #print(is_task_running(task["pid"], task["shell"]))
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 [tool.poetry]
 name = "startstop"
 version = "0.1.0"
-description = "Tiny process manager written in Python"
+description = "Tiny task supervisor for Linux/Unix"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
-homepage = "https://github.com/yuriescl/startstop-python"
+homepage = "https://github.com/yuriescl/startstop"
 packages = [
     { include = "startstop.py" }
 ]

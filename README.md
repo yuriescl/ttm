@@ -35,6 +35,8 @@ strip -s -R .comment -R .gnu.version --strip-unneeded startstop
 Replace `python3.9` with the target python version.
 
 Todo:
+    - allow tasks without name
+    - try optimizing imports to reduce binary size
     - update project description
     - start/stop/rm accept multiple names/id
     - start -a only works when starting a single process
@@ -55,3 +57,4 @@ Todo:
     - add --long to ls
     - add support for non-shell commands
     - add logs command
+    - add rm -a

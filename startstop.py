@@ -1,4 +1,5 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
+import re
 import sys
 from random import randint
 from datetime import datetime, timedelta
@@ -27,11 +28,6 @@ LOCK_PATH.touch(exist_ok=True)
 
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
-
-NAMES_LEFT = [ "admiring", "adoring", "affectionate", "agitated", "amazing", "angry", "awesome", "beautiful", "blissful", "bold", "boring", "brave", "busy", "charming", "clever", "cool", "compassionate", "competent", "condescending", "confident", "cranky", "crazy", "dazzling", "determined", "distracted", "dreamy", "eager", "ecstatic", "elastic", "elated", "elegant", "eloquent", "epic", "exciting", "fervent", "festive", "flamboyant", "focused", "friendly", "frosty", "funny", "gallant", "gifted", "goofy", "gracious", "great", "happy", "hardcore", "heuristic", "hopeful", "hungry", "infallible", "inspiring", "interesting", "intelligent", "jolly", "jovial", "keen", "kind", "laughing", "loving", "lucid", "magical", "mystifying", "modest", "musing", "naughty", "nervous", "nice", "nifty", "nostalgic", "objective", "optimistic", "peaceful", "pedantic", "pensive", "practical", "priceless", "quirky", "quizzical", "recursing", "relaxed", "reverent", "romantic", "sad", "serene", "sharp", "silly", "sleepy", "stoic", "strange", "stupefied", "suspicious", "sweet", "tender", "thirsty", "trusting", "unruffled", "upbeat", "vibrant", "vigilant", "vigorous", "wizardly", "wonderful", "xenodochial", "youthful", "zealous", "zen", ] # noqa
-NAMES_RIGHT = [ "agnesi", "albattani", "allen", "almeida", "antonelli", "archimedes", "ardinghelli", "aryabhata", "austin", "babbage", "banach", "banzai", "bardeen", "bartik", "bassi", "beaver", "bell", "benz", "bhabha", "bhaskara", "black", "blackburn", "blackwell", "bohr", "booth", "borg", "bose", "bouman", "boyd", "brahmagupta", "brattain", "brown", "buck", "burnell", "cannon", "carson", "cartwright", "carver", "cerf", "chandrasekhar", "chaplygin", "chatelet", "chatterjee", "chaum", "chebyshev", "clarke", "cohen", "colden", "cori", "cray", "curran", "curie", "darwin", "davinci", "dewdney", "dhawan", "diffie", "dijkstra", "dirac", "driscoll", "dubinsky", "easley", "edison", "einstein", "elbakyan", "elgamal", "elion", "ellis", "escalianti", "engelbart", "euclid", "euler", "faraday", "feistel", "fermat", "fermi", "feynman", "franklin", "gagarin", "galileo", "galois", "ganguly", "gates", "gauss", "germain", "goldberg", "goldstine", "goldwasser", "golick", "goodall", "gould", "greider", "grothendieck", "haibt", "hamilton", "haslett", "hawking", "hellman", "heisenberg", "hermann", "herschel", "hertz", "heyrovsky", "hodgkin", "hofstadter", "hoover", "hopper", "hugle", "hypatia", "ishizaka", "jackson", "jang", "jemison", "jennings", "jepsen", "johnson", "joliot", "jones", "kalam", "kapitsa", "kare", "keldysh", "keller", "kepler", "khayyam", "khorana", "kilby", "kirch", "knuth", "kowalevski", "lalande", "lamarr", "lamport", "leakey", "leavitt", "lederberg", "lehmann", "lewin", "lichterman", "liskov", "lovelace", "lumiere", "mahavira", "margulis", "matsumoto", "maxwell", "mayer", "mccarthy", "mcclintock", "mclaren", "mclean", "mcnulty", "mendel", "mendeleev", "meitner", "meninsky", "merkle", "mestorf", "mirzakhani", "montalcini", "moore", "morse", "murdock", "moser", "napier", "nash", "neumann", "newton", "nightingale", "nobel", "noether", "northcutt", "noyce", "panini", "pare", "pascal", "pasteur", "payne", "perlman", "pike", "poincare", "poitras", "proskuriakova", "ptolemy", "raman", "ramanujan", "ride", "ritchie", "rhodes", "robinson", "roentgen", "rosalind", "rubin", "saha", "sammet", "sanderson", "satoshi", "shamir", "shannon", "shaw", "shirley", "shockley", "shtern", "sinoussi", "snyder", "solomon", "spence", "stonebraker", "sutherland", "swanson", "swartz", "swirles", "taussig", "tereshkova", "tesla", "tharp", "thompson", "torvalds", "tu", "turing", "varahamihira", "vaughan", "villani", "visvesvaraya", "volhard", "wescoff", "wilbur", "wiles", "williams", "williamson", "wilson", "wing", "wozniak", "wright", "wu", "yalow", "yonath", "zhukovsky" ]  # noqa
-LIMIT_LEFT = len(NAMES_LEFT) - 1
-LIMIT_RIGHT = len(NAMES_RIGHT) - 1
 
 class StartstopException(Exception):
     pass
@@ -236,7 +232,10 @@ def find_task_by_id(task_id: str) -> Dict:
 
 
 def create_task_cache(task: Dict, split_output=False):
-    dirname = f"{task['name']}-{task['id']}"
+    if task["name"] is not None:
+        dirname = f"{task['name']}-{task['id']}"
+    else:
+        dirname = task["id"]
     dirpath = CACHE_DIR / dirname
     os.makedirs(dirpath, exist_ok=True)
     filepath = dirpath / "task.json"
@@ -270,7 +269,10 @@ def create_task_cache(task: Dict, split_output=False):
 
 
 def update_task_cache(task: Dict):
-    dirname = f"{task['name']}-{task['id']}"
+    if task["name"] is not None:
+        dirname = f"{task['name']}-{task['id']}"
+    else:
+        dirname = task["id"]
     dirpath = CACHE_DIR / dirname
     filepath = dirpath / "task.json"
     with open(filepath, "w") as f:
@@ -302,19 +304,12 @@ def generate_id():
             return str_i
     raise StartstopException("Failed to generated task ID")
 
-def generate_name():
-    """ Code based on https://github.com/moby/moby/blob/master/pkg/namesgenerator/names-generator.go """
-    name = NAMES_LEFT[randint(0, LIMIT_LEFT)] + "_" + NAMES_RIGHT[randint(0, LIMIT_RIGHT)]
-    while find_task_by_name(name) or name == "boring_wozniak":  # Steve Wozniak is not boring - according to someone
-        name = NAMES_LEFT[randint(0, LIMIT_LEFT)] + "_" + NAMES_RIGHT[randint(0, LIMIT_RIGHT)]
-    return name
-
 def is_task_running(task):
     output = subprocess.check_output(['ps', '-u' , str(os.getuid()), '-o', 'pid,args'])
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(' ', 1)
-        if ps_pid == task["pid"]:
+        if ps_pid == task.get("pid"):
             if cmdline.startswith(f"{task['shell']} -c"):
                 return True
     return False
@@ -366,8 +361,6 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
                     "To remove it, run:\n"
                     f"startstop rm {name}"
                 )
-        else:
-            name = generate_name()
         task = {
             "id": generate_id(),
             "name": name,
@@ -429,7 +422,10 @@ def start_task(task_id=None, name=None):
             if task is None:
                 raise StartstopException(f"No task with ID {task_id}")
 
-        dirname = f"{task['name']}-{task['id']}"
+        if task["name"] is not None:
+            dirname = f"{task['name']}-{task['id']}"
+        else:
+            dirname = task["id"]
         dirpath = CACHE_DIR / dirname
         command = [task["shell"], "-c"] + task["command"]
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -573,42 +569,34 @@ def ls(ls_all=False):
                         tasks.append(task)
             except (NotADirectoryError, FileNotFoundError, ValueError):
                 pass
-    total = 0
-    for i in range(0, 10000):
-        name = generate_name()
-        total += len(name)
+
+    name_len_max = 4
+    for task in tasks:
+        if task["name"] is not None and len(task["name"]) > name_len_max:
+            name_len_max = len(task["name"])
+
     columns = shutil.get_terminal_size((80, 20)).columns
-    if columns <= 80:
-        template = "{0:4} {1:16} {2:37} {3:6} {4:7}"
-    else:
-        space = columns - 21
-        name_size = str(int(space * 0.3))
-        command_size = str(int(space * 0.7))
-        template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
-        template = template.replace("NAME_SIZE", name_size)
-        template = template.replace("COMMAND_SIZE", command_size)
+    name_size = min(name_len_max, 16)
+    command_size = columns - 21 - name_size
+    template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
+    template = template.replace("NAME_SIZE", str(name_size))
+    template = template.replace("COMMAND_SIZE", str(command_size))
+    print(template)
     print(template.format("ID", "NAME", "COMMAND", "UPTIME", "PID"))
     for task in tasks:
-        command = []
-        if len(task["command"]) == 1:
-            command.append(task["command"][0])
-        else:
-            for c in task["command"]:
-                if " " in c:
-                    command.append(encode_basestring(c))
-                else:
-                    command.append(c)
-        command = " ".join(command)
-        print(template.format(task["id"], task["name"], command, task["uptime"], task["pid"]))
+        print(template.format(task["id"], task["name"] or "-", shlex.join(task["command"]), task["uptime"], task["pid"]))
 
 def main():
     try:
         if len(sys.argv) == 1:
             sys.exit(1)
         global_args, option, option_args, command = parse_args(sys.argv)
-        print(global_args, option, option_args, command)
+        #print(global_args, option, option_args, command)
         if option == "run":
             name = option_args.get("n") or option_args.get("name") or None
+            if name is not None:
+                if not re.match(r"^[a-zA-Z_]+$", name):
+                    raise StartstopException("Only letters and underscore are allowed in task name")
             attached = option_args.get("a") or option_args.get("attached")
             if attached:
                 asyncio.run(run_attached(command, name=name))

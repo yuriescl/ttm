@@ -1,7 +1,12 @@
 from typing import List, Dict
 import sys
-from datetime import datetime
+from random import randint
+from datetime import datetime, timedelta
+import shlex
+import time
+from string import Formatter
 import json
+from json.encoder import encode_basestring
 import os
 from os.path import join, abspath
 import asyncio
@@ -20,6 +25,13 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 LOCK_PATH = Path(CACHE_DIR / "lock")
 LOCK_PATH.touch(exist_ok=True)
 
+BUSY_LOOP_INTERVAL = 0.1  # seconds
+TIMESTAMP_FMT = "%Y%m%d%H%M%S"
+
+NAMES_LEFT = [ "admiring", "adoring", "affectionate", "agitated", "amazing", "angry", "awesome", "beautiful", "blissful", "bold", "boring", "brave", "busy", "charming", "clever", "cool", "compassionate", "competent", "condescending", "confident", "cranky", "crazy", "dazzling", "determined", "distracted", "dreamy", "eager", "ecstatic", "elastic", "elated", "elegant", "eloquent", "epic", "exciting", "fervent", "festive", "flamboyant", "focused", "friendly", "frosty", "funny", "gallant", "gifted", "goofy", "gracious", "great", "happy", "hardcore", "heuristic", "hopeful", "hungry", "infallible", "inspiring", "interesting", "intelligent", "jolly", "jovial", "keen", "kind", "laughing", "loving", "lucid", "magical", "mystifying", "modest", "musing", "naughty", "nervous", "nice", "nifty", "nostalgic", "objective", "optimistic", "peaceful", "pedantic", "pensive", "practical", "priceless", "quirky", "quizzical", "recursing", "relaxed", "reverent", "romantic", "sad", "serene", "sharp", "silly", "sleepy", "stoic", "strange", "stupefied", "suspicious", "sweet", "tender", "thirsty", "trusting", "unruffled", "upbeat", "vibrant", "vigilant", "vigorous", "wizardly", "wonderful", "xenodochial", "youthful", "zealous", "zen", ] # noqa
+NAMES_RIGHT = [ "agnesi", "albattani", "allen", "almeida", "antonelli", "archimedes", "ardinghelli", "aryabhata", "austin", "babbage", "banach", "banzai", "bardeen", "bartik", "bassi", "beaver", "bell", "benz", "bhabha", "bhaskara", "black", "blackburn", "blackwell", "bohr", "booth", "borg", "bose", "bouman", "boyd", "brahmagupta", "brattain", "brown", "buck", "burnell", "cannon", "carson", "cartwright", "carver", "cerf", "chandrasekhar", "chaplygin", "chatelet", "chatterjee", "chaum", "chebyshev", "clarke", "cohen", "colden", "cori", "cray", "curran", "curie", "darwin", "davinci", "dewdney", "dhawan", "diffie", "dijkstra", "dirac", "driscoll", "dubinsky", "easley", "edison", "einstein", "elbakyan", "elgamal", "elion", "ellis", "escalianti", "engelbart", "euclid", "euler", "faraday", "feistel", "fermat", "fermi", "feynman", "franklin", "gagarin", "galileo", "galois", "ganguly", "gates", "gauss", "germain", "goldberg", "goldstine", "goldwasser", "golick", "goodall", "gould", "greider", "grothendieck", "haibt", "hamilton", "haslett", "hawking", "hellman", "heisenberg", "hermann", "herschel", "hertz", "heyrovsky", "hodgkin", "hofstadter", "hoover", "hopper", "hugle", "hypatia", "ishizaka", "jackson", "jang", "jemison", "jennings", "jepsen", "johnson", "joliot", "jones", "kalam", "kapitsa", "kare", "keldysh", "keller", "kepler", "khayyam", "khorana", "kilby", "kirch", "knuth", "kowalevski", "lalande", "lamarr", "lamport", "leakey", "leavitt", "lederberg", "lehmann", "lewin", "lichterman", "liskov", "lovelace", "lumiere", "mahavira", "margulis", "matsumoto", "maxwell", "mayer", "mccarthy", "mcclintock", "mclaren", "mclean", "mcnulty", "mendel", "mendeleev", "meitner", "meninsky", "merkle", "mestorf", "mirzakhani", "montalcini", "moore", "morse", "murdock", "moser", "napier", "nash", "neumann", "newton", "nightingale", "nobel", "noether", "northcutt", "noyce", "panini", "pare", "pascal", "pasteur", "payne", "perlman", "pike", "poincare", "poitras", "proskuriakova", "ptolemy", "raman", "ramanujan", "ride", "ritchie", "rhodes", "robinson", "roentgen", "rosalind", "rubin", "saha", "sammet", "sanderson", "satoshi", "shamir", "shannon", "shaw", "shirley", "shockley", "shtern", "sinoussi", "snyder", "solomon", "spence", "stonebraker", "sutherland", "swanson", "swartz", "swirles", "taussig", "tereshkova", "tesla", "tharp", "thompson", "torvalds", "tu", "turing", "varahamihira", "vaughan", "villani", "visvesvaraya", "volhard", "wescoff", "wilbur", "wiles", "williams", "williamson", "wilson", "wing", "wozniak", "wright", "wu", "yalow", "yonath", "zhukovsky" ]  # noqa
+LIMIT_LEFT = len(NAMES_LEFT) - 1
+LIMIT_RIGHT = len(NAMES_RIGHT) - 1
 
 class StartstopException(Exception):
     pass
@@ -86,6 +98,10 @@ def arg_requires_value(arg: str, option=None):
         raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "rm":
         raise StartstopException(f"Unrecognized argument --{arg}")
+    elif option == "ls":
+        if arg in ["a", "all"]:
+            return False
+        raise StartstopException(f"Unrecognized argument --{arg}")
 
 
 def is_value_next(args: List[str], pos: int):
@@ -101,7 +117,7 @@ def parse_args(argv: List[str]):
         if pos >= len(args):
             break
         current_arg = args[pos]
-        if current_arg in ["run", "start", "stop", "rm"]:
+        if current_arg in ["run", "start", "stop", "rm", "ls"]:
             option = current_arg
             pos += 1
             break
@@ -147,7 +163,7 @@ def parse_args(argv: List[str]):
     command = None
 
     if option is not None:
-        if pos >= len(args):
+        if pos >= len(args) and option not in ["ls"]:
             raise StartstopException(f"Missing arguments for option '{option}'")
         while True:
             if pos >= len(args):
@@ -198,27 +214,25 @@ def parse_args(argv: List[str]):
     return global_args, option, option_args, command
 
 
-def find_task_by_name(name: str, lock=True) -> Dict:
-    with AtomicOpen(LOCK_PATH, noop=not lock):
-        for filename in os.listdir(CACHE_DIR):
-            if filename.split("-")[0] == name:
+def find_task_by_name(name: str) -> Dict:
+    for filename in os.listdir(CACHE_DIR):
+        if filename.split("-")[0] == name:
+            path = abspath(join(CACHE_DIR, filename, "task.json"))
+            with open(path) as f:
+                return json.load(f)
+    return None
+
+
+def find_task_by_id(task_id: str) -> Dict:
+    for filename in os.listdir(CACHE_DIR):
+        try:
+            if filename.split("-")[1] == task_id:
                 path = abspath(join(CACHE_DIR, filename, "task.json"))
                 with open(path) as f:
                     return json.load(f)
-        return None
-
-
-def find_task_by_id(task_id: str, lock=True) -> Dict:
-    with AtomicOpen(LOCK_PATH, noop=not lock):
-        for filename in os.listdir(CACHE_DIR):
-            try:
-                if filename.split("-")[1] == task_id:
-                    path = abspath(join(CACHE_DIR, filename, "task.json"))
-                    with open(path) as f:
-                        return json.load(f)
-            except IndexError as e:
-                pass
-        return None
+        except IndexError as e:
+            pass
+    return None
 
 
 def create_task_cache(task: Dict, split_output=False):
@@ -226,7 +240,7 @@ def create_task_cache(task: Dict, split_output=False):
     dirpath = CACHE_DIR / dirname
     os.makedirs(dirpath, exist_ok=True)
     filepath = dirpath / "task.json"
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now().strftime(TIMESTAMP_FMT)
     if split_output:
         stdoutpath = dirpath / f"{dirname}-{timestamp}.out"
         stderrpath = dirpath / f"{dirname}-{timestamp}.err"
@@ -242,11 +256,13 @@ def create_task_cache(task: Dict, split_output=False):
             "shell": str(shellpath),
             "stdout": str(stdoutpath),
             "stderr": str(stderrpath),
+            "started_at": timestamp,
         })
     else:
         task.update({
             "shell": str(shellpath),
             "logs": str(logspath),
+            "started_at": timestamp,
         })
     with open(filepath, "w") as f:
         json.dump(task, f)
@@ -274,11 +290,24 @@ def signal_handler(process):
 
 
 def generate_id():
-    return "i1821jn2m"
-
+    existing_ids = []
+    for filename in os.listdir(CACHE_DIR):
+        try:
+            existing_ids.append(filename.split("-")[1])
+        except IndexError as e:
+            pass
+    for i in range(1, 10000):
+        str_i = str(i)
+        if str_i not in existing_ids:
+            return str_i
+    raise StartstopException("Failed to generated task ID")
 
 def generate_name():
-    return "test_name"
+    """ Code based on https://github.com/moby/moby/blob/master/pkg/namesgenerator/names-generator.go """
+    name = NAMES_LEFT[randint(0, LIMIT_LEFT)] + "_" + NAMES_RIGHT[randint(0, LIMIT_RIGHT)]
+    while find_task_by_name(name) or name == "boring_wozniak":  # Steve Wozniak is not boring - according to someone
+        name = NAMES_LEFT[randint(0, LIMIT_LEFT)] + "_" + NAMES_RIGHT[randint(0, LIMIT_RIGHT)]
+    return name
 
 def is_task_running(task):
     output = subprocess.check_output(['ps', '-u' , str(os.getuid()), '-o', 'pid,args'])
@@ -286,7 +315,7 @@ def is_task_running(task):
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(' ', 1)
         if ps_pid == task["pid"]:
-            if cmdline.startswith(task["shell"]):
+            if cmdline.startswith(f"{task['shell']} -c"):
                 return True
     return False
 
@@ -294,7 +323,7 @@ def remove_task_by_name(name: str):
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
             if filename.split("-")[0] == name:
-                task = find_task_by_name(name, lock=False)
+                task = find_task_by_name(name)
                 if is_task_running(task):
                     raise StartstopException(
                         "Cannot remove task while it's running.\n"
@@ -303,15 +332,15 @@ def remove_task_by_name(name: str):
                     )
                 dirpath = abspath(join(CACHE_DIR, filename))
                 shutil.rmtree(dirpath)
-                return True
-        return False
+                return
+        raise StartstopException(f"No task with name {name}")
 
 def remove_task_by_id(task_id: str):
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
             try:
                 if filename.split("-")[1] == task_id:
-                    task = find_task_by_id(task_id, lock=False)
+                    task = find_task_by_id(task_id)
                     if is_task_running(task):
                         raise StartstopException(
                             "Cannot remove task while it's running.\n"
@@ -320,10 +349,10 @@ def remove_task_by_id(task_id: str):
                         )
                     dirpath = abspath(join(CACHE_DIR, filename))
                     shutil.rmtree(dirpath)
-                    return True
+                    return
             except IndexError as e:
                 pass
-        return False
+        raise StartstopException(f"No task with ID {task_id}")
 
 async def run(command: List[str], name=None, attached=False, split_output=False):
     with AtomicOpen(LOCK_PATH):
@@ -331,9 +360,9 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
             task = find_task_by_name(name)
             if task:
                 if is_task_running(task):
-                    raise StartstopException(f"A task with this name already exists with PID {task.get('pid')}")
+                    raise StartstopException(f"Task {name} is already running with PID {task.get('pid')}")
                 raise StartstopException(
-                    "A task with this name already exists but it's not running.\n"
+                    f"Task {name} already exists and it's not running.\n"
                     "To remove it, run:\n"
                     f"startstop rm {name}"
                 )
@@ -353,7 +382,7 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
             task = create_task_cache(task, split_output=split_output)
             shellpath = task["shell"]
             logspath = task["logs"]
-        command = [shellpath, "-c"] + command
+        command = [shellpath, "-c", shlex.join(command)]
         if not attached:
             if split_output:
                 with open(stdoutpath, "wb") as stdout:
@@ -392,7 +421,7 @@ def start_task(task_id=None, name=None):
             task = find_task_by_name(name)
             if task is not None:
                 if is_task_running(task):
-                    raise StartstopException(f"A task with this name already exists with PID {task.get('pid')}")
+                    raise StartstopException(f"Task {name} is already running with PID {task.get('pid')}")
             else:
                 raise StartstopException(f"No task with name {name}")
         else:
@@ -425,8 +454,48 @@ def start_task(task_id=None, name=None):
                     stderr=output,
                 )
         task["pid"] = str(proc.pid)
+        task["started_at"] = timestamp
         update_task_cache(task)
         return task
+
+def stop_task(task_id=None, name=None):
+    with AtomicOpen(LOCK_PATH):
+        if name is not None:
+            task = find_task_by_name(name)
+            if task is not None:
+                if not is_task_running(task):
+                    raise StartstopException(f"Task {name} is not running")
+            else:
+                raise StartstopException(f"No task with name {name}")
+        else:
+            task = find_task_by_id(task_id)
+            if task is None:
+                raise StartstopException(f"No task with ID {task_id}")
+
+        os.kill(int(task["pid"]), signal.SIGTERM)
+        while is_task_running(task):
+            time.sleep(BUSY_LOOP_INTERVAL)
+
+        return task
+
+def format_seconds(seconds, long=False):
+    if long:
+        raise NotImplementedError()
+    else:
+        days, remainder = divmod(seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        s = ""
+        if days > 0:
+            s += f"{days}d"
+        elif hours > 0:
+            s += f"{hours}h"
+        elif minutes > 0:
+            s += f"{minutes}m"
+        else:
+            s += f"{seconds}s"
+        return s
+
 
 def print_error(msg: str, *args, **kwargs):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
@@ -447,21 +516,13 @@ def rm(task_name_or_id: str):
 
     try:
         if task_id is not None:
-            result = remove_task_by_id(task_id)
-            if result is True:
-                print_success(task_id)
-            else:
-                print_error(f"No task with ID {task_id}", file=sys.stderr)
+            remove_task_by_id(task_id)
         else:
-            result = remove_task_by_name(name)
-            if result is True:
-                print_success(name)
-            else:
-                print_error(f"No task with name {name}", file=sys.stderr)
+            remove_task_by_name(name)
     except StartstopException as e:
         print_error(str(e))
         return False
-    return result
+    return True
 
 def start(task_name_or_id: str):
     try:
@@ -473,7 +534,6 @@ def start(task_name_or_id: str):
 
     try:
         task = start_task(task_id=task_id, name=name)
-        print_success(task["id"])
         return True
     except StartstopException as e:
         print_error(str(e))
@@ -488,43 +548,94 @@ def stop(task_name_or_id: str):
         name = task_name_or_id
 
     try:
-        TODO
-        print_success(task["id"])
+        task = stop_task(task_id=task_id, name=name)
         return True
     except StartstopException as e:
         print_error(str(e))
         return False
+
+def ls(ls_all=False):
+    tasks = []
+    with AtomicOpen(LOCK_PATH):
+        for filename in os.listdir(CACHE_DIR):
+            path = abspath(join(CACHE_DIR, filename, "task.json"))
+            try:
+                with open(path) as f:
+                    task = json.load(f)
+                    if is_task_running(task):
+                        started_at = datetime.strptime(task["started_at"], TIMESTAMP_FMT)
+                        diff = datetime.now() - started_at
+                        task["uptime"] = format_seconds(int(diff.total_seconds()))
+                        tasks.append(task)
+                    elif ls_all:
+                        task["pid"] = "-"
+                        task["uptime"] = "-"
+                        tasks.append(task)
+            except (NotADirectoryError, FileNotFoundError, ValueError):
+                pass
+    total = 0
+    for i in range(0, 10000):
+        name = generate_name()
+        total += len(name)
+    columns = shutil.get_terminal_size((80, 20)).columns
+    if columns <= 80:
+        template = "{0:4} {1:16} {2:37} {3:6} {4:7}"
+    else:
+        space = columns - 21
+        name_size = str(int(space * 0.3))
+        command_size = str(int(space * 0.7))
+        template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
+        template = template.replace("NAME_SIZE", name_size)
+        template = template.replace("COMMAND_SIZE", command_size)
+    print(template.format("ID", "NAME", "COMMAND", "UPTIME", "PID"))
+    for task in tasks:
+        command = []
+        if len(task["command"]) == 1:
+            command.append(task["command"][0])
+        else:
+            for c in task["command"]:
+                if " " in c:
+                    command.append(encode_basestring(c))
+                else:
+                    command.append(c)
+        command = " ".join(command)
+        print(template.format(task["id"], task["name"], command, task["uptime"], task["pid"]))
 
 def main():
     try:
         if len(sys.argv) == 1:
             sys.exit(1)
         global_args, option, option_args, command = parse_args(sys.argv)
-        #print(global_args, option, option_args, command)
+        print(global_args, option, option_args, command)
         if option == "run":
             name = option_args.get("n") or option_args.get("name") or None
             attached = option_args.get("a") or option_args.get("attached")
             if attached:
                 asyncio.run(run_attached(command, name=name))
             else:
-                task = asyncio.run(run(command, name=name))
-                print_success(task["id"])
+                asyncio.run(run(command, name=name))
+
         elif option == "rm":
-            errors = False
             pool = ThreadPool(len(command))
             results = pool.map(rm, command)
             if not all(results):
                 sys.exit(1)
 
         elif option == "start":
+            pool = ThreadPool(len(command))
             results = pool.map(start, command)
             if not all(results):
                 sys.exit(1)
 
         elif option == "stop":
+            pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
                 sys.exit(1)
+
+        elif option == "ls":
+            ls_all = option_args.get("a") or option_args.get("all")
+            ls(ls_all=ls_all)
 
     except StartstopException as e:
         print_error(str(e))

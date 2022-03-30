@@ -7,6 +7,7 @@ from os.path import join, abspath
 import asyncio
 from pathlib import Path
 import subprocess
+from multiprocessing.dummy import Pool as ThreadPool
 import shutil
 import signal
 import fcntl
@@ -436,6 +437,64 @@ def print_warning(msg: str, *args, **kwargs):
 def print_success(msg: str, *args, **kwargs):
     print(f"{bcolors.OKGREEN}{msg}{bcolors.ENDC}", *args, **kwargs)
 
+def rm(task_name_or_id: str):
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    try:
+        if task_id is not None:
+            result = remove_task_by_id(task_id)
+            if result is True:
+                print_success(task_id)
+            else:
+                print_error(f"No task with ID {task_id}", file=sys.stderr)
+        else:
+            result = remove_task_by_name(name)
+            if result is True:
+                print_success(name)
+            else:
+                print_error(f"No task with name {name}", file=sys.stderr)
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+    return result
+
+def start(task_name_or_id: str):
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    try:
+        task = start_task(task_id=task_id, name=name)
+        print_success(task["id"])
+        return True
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+
+def stop(task_name_or_id: str):
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    try:
+        TODO
+        print_success(task["id"])
+        return True
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+
 def main():
     try:
         if len(sys.argv) == 1:
@@ -452,47 +511,24 @@ def main():
                 print_success(task["id"])
         elif option == "rm":
             errors = False
-            for c in command:
-                try:
-                    task_id = str(int(c))
-                    name = None
-                except (ValueError, TypeError):
-                    task_id = None
-                    name = c
-
-                if task_id is not None:
-                    result = remove_task_by_id(task_id)
-                    if result is True:
-                        print_success(task_id)
-                    else:
-                        print_error(f"No task with ID {task_id}", file=sys.stderr)
-                        errors = True
-                else:
-                    result = remove_task_by_name(name)
-                    if result is True:
-                        print_success(name)
-                    else:
-                        print_error(f"No task with name {name}", file=sys.stderr)
-                        errors = True
-            if errors is True:
+            pool = ThreadPool(len(command))
+            results = pool.map(rm, command)
+            if not all(results):
                 sys.exit(1)
 
         elif option == "start":
-            for c in command:
-                try:
-                    task_id = str(int(c))
-                    name = None
-                except (ValueError, TypeError):
-                    task_id = None
-                    name = c
+            results = pool.map(start, command)
+            if not all(results):
+                sys.exit(1)
 
-                task = start_task(task_id=task_id, name=name)
-                print_success(task["id"])
+        elif option == "stop":
+            results = pool.map(stop, command)
+            if not all(results):
+                sys.exit(1)
 
     except StartstopException as e:
         print_error(str(e))
         sys.exit(1)
-        #print(is_task_running(task["pid"], task["shell"]))
 
 
 if __name__ == "__main__":

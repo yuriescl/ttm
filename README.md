@@ -30,3 +30,7 @@ Todo:
     - add --help
     - print --help when command is in invalid format
     - allow specifying cache dir
+    - allow start/stop/rm non-parallel
+    - test in pure Unix
+    - what is user has no home dir?
+    - add doc explaining how processes are tracked

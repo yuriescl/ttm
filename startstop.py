@@ -600,7 +600,6 @@ def ls(ls_all=False):
                     command.append(c)
         command = " ".join(command)
         print(template.format(task["id"], task["name"], command, task["uptime"], task["pid"]))
-    raise Exception("test")
 
 def main():
     try:

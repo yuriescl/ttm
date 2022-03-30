@@ -25,10 +25,12 @@ poetry shell
 
 ## Building the standalone binary
 
+This build worked on Debian 11:
 ```
 sudo apt install python3-dev
 cython -3 --embed -o startstop.c startstop.py
 gcc -Os -I /usr/include/python3.9 -o startstop startstop.c -lpython3.9 -lpthread -lm -lutil -ldl
+strip -s -R .comment -R .gnu.version --strip-unneeded startstop
 ```
 Replace `python3.9` with the target python version.
 

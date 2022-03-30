@@ -9,6 +9,11 @@ poetry install
 poetry shell
 ```
 
+```
+cython -3 --embed -o startstop.c startstop.py
+gcc -Os -I /usr/include/python3.9 -o startstop startstop.c -lpython3.9 -lpthread -lm -lutil -ldl
+```
+
 Todo:
     - update project description
     - allow matching partial id
@@ -20,4 +25,3 @@ Todo:
     - add --help
     - print --help when command is in invalid format
     - allow specifying cache dir
-    - make C version?

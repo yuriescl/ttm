@@ -5,3 +5,7 @@ __pycache__/
 *.sqlite3
 
 dist/
+/startstop.c
+/startstop
+
+

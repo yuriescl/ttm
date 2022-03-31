@@ -6,7 +6,7 @@ authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
 homepage = "https://github.com/yuriescl/startstop"
 packages = [
-    { include = "startstop.py" }
+    { include = "startstop" }
 ]
 
 [tool.poetry.scripts]

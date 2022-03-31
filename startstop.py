@@ -24,6 +24,7 @@ makedirs(CACHE_DIR, exist_ok=True)
 LOCK_PATH = Path(CACHE_DIR / "lock")
 LOCK_PATH.touch(exist_ok=True)
 
+VERSION = "0.1.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -89,7 +90,7 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
         return "-" if len(a) == 1 else "--"
 
     if option is None:
-        if arg in ["v", "verbose"]:
+        if arg in ["v", "verbose", "version"]:
             return False
     elif option == "run":
         if arg in ["a", "attach", "split-output"]:
@@ -660,7 +661,12 @@ def main():
             exit(1)
         global_args, option, option_args, command = parse_args(argv)
 
-        if option == "run":
+        if option is None:
+            version = global_args.get("version")
+            if version:
+                print(VERSION)
+                return
+        elif option == "run":
             name = option_args.get("n") or option_args.get("name") or None
             if name is not None:
                 if not match(r"^[a-zA-Z_]+$", name):
@@ -672,7 +678,7 @@ def main():
                 asyncio_run(run(command, name=name))
 
         elif option == "rm":
-            rm_all = option_args.get("a") or option_args.get("all") or None
+            rm_all = option_args.get("a") or option_args.get("all")
             if rm_all is True:
                 rm(None, rm_all=rm_all)
             else:

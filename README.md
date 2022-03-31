@@ -68,7 +68,6 @@ poetry shell
 Todo:
 - add -q global flag
 - add some sort of execution log history to easily see logs
-- add requirements (python3, ps, etc)
 - add --help
 - print --help when command is in invalid format
 - allow specifying cache dir

@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "startstop"
+version = "0.1.0"
+description = "Tiny process manager for Linux, MacOS and Unix-like systems"
+authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
+license = "MIT License"
+homepage = "https://github.com/yuriescl/startstop"
+packages = [
+    { include = "startstop.py" }
+]
+
+[tool.poetry.scripts]
+startstop = 'startstop:main'
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+[tool.poetry.dev-dependencies]
+black = "^22.3.0"
+flake8 = "^4.0.1"
+ipython = "^7.32.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

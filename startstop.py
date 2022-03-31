@@ -1,52 +1,56 @@
-from typing import List, Dict, Optional
-import re
-import sys
-from random import randint
-from datetime import datetime, timedelta
-import shlex
-import time
-from string import Formatter
-import json
+# Functions and classes are imported directly to get a smaller compiled binary
+from typing import List, Dict, Optional, Tuple, Union
+from re import match
+from sys import exit, stderr, argv
+from datetime import datetime
+from shlex import join as shlex_join
+from time import sleep
+from json import load, dump
 from json.encoder import encode_basestring
-import os
+from os import makedirs, fsync, listdir, symlink, getuid, kill
 from os.path import join, abspath
-import asyncio
+from asyncio import run as asyncio_run, create_subprocess_shell
+from asyncio.subprocess import Process
 from pathlib import Path
-import subprocess
+from subprocess import check_output, Popen
 from multiprocessing.dummy import Pool as ThreadPool
-import shutil
-import signal
-import fcntl
+from shutil import rmtree, get_terminal_size
+from signal import SIGINT, SIGTERM, signal
+from fcntl import lockf, LOCK_EX, LOCK_UN
 
 
-
-# TODO raise error if OS is not unix
 CACHE_DIR = Path.home() / ".startstop"
-os.makedirs(CACHE_DIR, exist_ok=True)
+makedirs(CACHE_DIR, exist_ok=True)
 LOCK_PATH = Path(CACHE_DIR / "lock")
 LOCK_PATH.touch(exist_ok=True)
 
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
+Task = dict
+
+
 class StartstopException(Exception):
     pass
+
 
 class AtomicOpen:
     """ https://stackoverflow.com/a/46407326/3705710 """
     def __init__(self, path, *args, noop=False, **kwargs):
         if noop is False:
-            self.file = open(path,*args, **kwargs)
+            self.file = open(path, *args, **kwargs)
             self.lock_file(self.file)
         self.noop = noop
 
-    def lock_file(self, f):
+    @staticmethod
+    def lock_file(f):
         if f.writable():
-            fcntl.lockf(f, fcntl.LOCK_EX)
+            lockf(f, LOCK_EX)
 
-    def unlock_file(self, f):
+    @staticmethod
+    def unlock_file(f):
         if f.writable():
-            fcntl.lockf(f, fcntl.LOCK_UN)
+            lockf(f, LOCK_UN)
 
     def __enter__(self, *args, **kwargs):
         if self.noop is False:
@@ -55,13 +59,14 @@ class AtomicOpen:
     def __exit__(self, exc_type=None, exc_value=None, traceback=None):
         if self.noop is False:
             self.file.flush()
-            os.fsync(self.file.fileno())
+            fsync(self.file.fileno())
             self.unlock_file(self.file)
             self.file.close()
-            if (exc_type is not None):
+            if exc_type is not None:
                 return False
             else:
                 return True
+
 
 class bcolors:
     """ https://stackoverflow.com/a/287944/3705710 """
@@ -75,37 +80,42 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def arg_requires_value(arg: str, option=None):
+
+##############
+# ARG PARSING
+
+def arg_requires_value(arg: str, option=None) -> bool:
+    def dashes(a: str):
+        return "-" if len(a) == 1 else "--"
+
     if option is None:
         if arg in ["v", "verbose"]:
             return False
-        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "run":
         if arg in ["a", "attach", "split-output"]:
             return False
         if arg in ["n", "name"]:
             return True
-        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "start":
-        raise StartstopException(f"Unrecognized argument --{arg}")
+        pass
     elif option == "stop":
         if arg in ["k"]:
             return False
-        raise StartstopException(f"Unrecognized argument --{arg}")
     elif option == "rm":
-        raise StartstopException(f"Unrecognized argument --{arg}")
+        if arg in ["a", "all"]:
+            return False
     elif option == "ls":
         if arg in ["a", "all"]:
             return False
-        raise StartstopException(f"Unrecognized argument --{arg}")
+    raise StartstopException(f"Unrecognized argument {dashes(arg)}{arg}")
 
 
-def is_value_next(args: List[str], pos: int):
+def is_value_next(args: List[str], pos: int) -> bool:
     return pos + 1 < len(args) and not args[pos + 1].startswith("-")
 
 
-def parse_args(argv: List[str]):
-    args = argv[1:]
+def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Optional[List[str]]]:
+    args = args_to_parse[1:]
     global_args = {}
     option = None
     pos = 0
@@ -209,115 +219,103 @@ def parse_args(argv: List[str]):
 
     return global_args, option, option_args, command
 
-
-def find_task_by_name(name: str) -> Dict:
-    for filename in os.listdir(CACHE_DIR):
-        if filename.split("-")[0] == name:
-            path = abspath(join(CACHE_DIR, filename, "task.json"))
-            with open(path) as f:
-                return json.load(f)
-    return None
+##################
+# FILE OPERATIONS
 
 
-def find_task_by_id(task_id: str) -> Dict:
-    for filename in os.listdir(CACHE_DIR):
-        try:
-            if filename.split("-")[1] == task_id:
-                path = abspath(join(CACHE_DIR, filename, "task.json"))
-                with open(path) as f:
-                    return json.load(f)
-        except IndexError as e:
-            pass
-    return None
-
-
-def create_task_cache(task: Dict, split_output=False):
+def create_task_cache(task: Task, split_output=False) -> Task:
     if task["name"] is not None:
-        dirname = f"{task['name']}-{task['id']}"
+        dir_name = f"{task['name']}-{task['id']}"
     else:
-        dirname = task["id"]
-    dirpath = CACHE_DIR / dirname
-    os.makedirs(dirpath, exist_ok=True)
-    filepath = dirpath / "task.json"
+        dir_name = task["id"]
+    dir_path = CACHE_DIR / dir_name
+    makedirs(dir_path, exist_ok=True)
+    filepath = dir_path / "task.json"
     timestamp = datetime.now().strftime(TIMESTAMP_FMT)
-    if split_output:
-        stdoutpath = dirpath / f"{dirname}-{timestamp}.out"
-        stderrpath = dirpath / f"{dirname}-{timestamp}.err"
-    else:
-        logspath = dirpath / f"{dirname}-{timestamp}.log"
-    shellpath = str(dirpath / task["id"])
+    shell_path = str(dir_path / task["id"])
     try:
-        os.symlink("/bin/sh", shellpath)
+        symlink("/bin/sh", shell_path)
     except FileExistsError:
         pass
     if split_output:
+        stdout_path = dir_path / f"{dir_name}-{timestamp}.out"
+        stderr_path = dir_path / f"{dir_name}-{timestamp}.err"
         task.update({
-            "shell": str(shellpath),
-            "stdout": str(stdoutpath),
-            "stderr": str(stderrpath),
+            "shell": str(shell_path),
+            "stdout": str(stdout_path),
+            "stderr": str(stderr_path),
             "started_at": timestamp,
         })
     else:
+        logs_path = dir_path / f"{dir_name}-{timestamp}.log"
         task.update({
-            "shell": str(shellpath),
-            "logs": str(logspath),
+            "shell": str(shell_path),
+            "logs": str(logs_path),
             "started_at": timestamp,
         })
     with open(filepath, "w") as f:
-        json.dump(task, f)
+        dump(task, f)
     return task
 
 
-def update_task_cache(task: Dict):
+def update_task_cache(task: Task):
     if task["name"] is not None:
-        dirname = f"{task['name']}-{task['id']}"
+        dir_name = f"{task['name']}-{task['id']}"
     else:
-        dirname = task["id"]
-    dirpath = CACHE_DIR / dirname
-    filepath = dirpath / "task.json"
+        dir_name = task["id"]
+    dir_path = CACHE_DIR / dir_name
+    filepath = dir_path / "task.json"
     with open(filepath, "w") as f:
-        json.dump(task, f)
+        dump(task, f)
 
 
-def signal_handler(process):
-    def wrapper(signum, frame):
-        process.send_signal(signum)
-        if signum == signal.SIGINT:
-            print("Interrupted", file=sys.stderr)
-            sys.exit(1)
-        if signum == signal.SIGTERM:
-            print("Terminated", file=sys.stderr)
-            sys.exit(1)
-    return wrapper
-
-
-def generate_id():
-    existing_ids = []
-    for filename in os.listdir(CACHE_DIR):
-        try:
-            existing_ids.append(filename.split("-")[1])
-        except IndexError as e:
-            pass
-    for i in range(1, 10000):
-        str_i = str(i)
-        if str_i not in existing_ids:
-            return str_i
-    raise StartstopException("Failed to generated task ID")
-
-def is_task_running(task):
-    output = subprocess.check_output(['ps', '-u' , str(os.getuid()), '-o', 'pid,args'])
+def is_task_running(task: Task) -> bool:
+    output = check_output(['ps', '-u', str(getuid()), '-o', 'pid,args'])
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(' ', 1)
-        if ps_pid == task.get("pid"):
+        if ps_pid == task["pid"]:
             if cmdline.startswith(f"{task['shell']} -c"):
                 return True
     return False
 
+
+def find_task_by_name(name: str) -> Optional[Dict]:
+    for filename in listdir(CACHE_DIR):
+        if filename.split("-")[0] == name:
+            path = abspath(join(CACHE_DIR, filename, "task.json"))
+            with open(path) as f:
+                return load(f)
+    return None
+
+
+def find_task_by_id(task_id: str) -> Optional[Dict]:
+    for filename in listdir(CACHE_DIR):
+        try:
+            filename_split = filename.split("-")
+            if len(filename_split) == 1:
+                filename_task_id = filename_split[0]
+            else:
+                filename_task_id = filename_split[1]
+            if filename_task_id == task_id:
+                path = abspath(join(CACHE_DIR, filename, "task.json"))
+                with open(path) as f:
+                    return load(f)
+        except IndexError:
+            pass
+    return None
+
+
 def remove_task_by_name(name: str):
     with AtomicOpen(LOCK_PATH):
-        for filename in os.listdir(CACHE_DIR):
-            if filename.split("-")[0] == name:
+        for filename in listdir(CACHE_DIR):
+            filename_split = filename.split("-")
+            if len(filename_split) == 1:
+                raise StartstopException(f"No task with name {name}")
+            else:
+                filename_task_name = filename_split[0]
+
+            if filename_task_name == name:
                 task = find_task_by_name(name)
                 if is_task_running(task):
                     raise StartstopException(
@@ -325,16 +323,23 @@ def remove_task_by_name(name: str):
                         "To stop it, run:\n"
                         f"startstop stop {name}"
                     )
-                dirpath = abspath(join(CACHE_DIR, filename))
-                shutil.rmtree(dirpath)
+                dir_path = abspath(join(CACHE_DIR, filename))
+                rmtree(dir_path)
                 return
         raise StartstopException(f"No task with name {name}")
 
+
 def remove_task_by_id(task_id: str):
     with AtomicOpen(LOCK_PATH):
-        for filename in os.listdir(CACHE_DIR):
+        for filename in listdir(CACHE_DIR):
             try:
-                if filename.split("-")[1] == task_id:
+                filename_split = filename.split("-")
+                if len(filename_split) == 1:
+                    filename_task_id = filename_split[0]
+                else:
+                    filename_task_id = filename_split[1]
+
+                if filename_task_id == task_id:
                     task = find_task_by_id(task_id)
                     if is_task_running(task):
                         raise StartstopException(
@@ -342,20 +347,50 @@ def remove_task_by_id(task_id: str):
                             "To stop it, run:\n"
                             f"startstop stop {task_id}"
                         )
-                    dirpath = abspath(join(CACHE_DIR, filename))
-                    shutil.rmtree(dirpath)
+                    dir_path = abspath(join(CACHE_DIR, filename))
+                    rmtree(dir_path)
                     return
-            except IndexError as e:
+            except IndexError:
                 pass
         raise StartstopException(f"No task with ID {task_id}")
 
-async def run(command: List[str], name=None, attached=False, split_output=False):
+
+def signal_handler(process):
+    def wrapper(signum, frame):
+        process.send_signal(signum)
+        if signum == SIGINT:
+            print("Interrupted", file=stderr)
+            exit(1)
+        if signum == SIGTERM:
+            print("Terminated", file=stderr)
+            exit(1)
+    return wrapper
+
+
+def generate_id():
+    existing_ids = []
+    for filename in listdir(CACHE_DIR):
+        try:
+            existing_ids.append(str(int(filename)))
+        except ValueError:
+            pass
+    for i in range(1, 10000):
+        str_i = str(i)
+        if str_i not in existing_ids:
+            return str_i
+    raise StartstopException("Failed to generated task ID")
+
+
+#############
+# OPERATIONS
+
+async def run(command: List[str], name=None, attached=False, split_output=False) -> Union[Task, Process]:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
             if task:
                 if is_task_running(task):
-                    raise StartstopException(f"Task {name} is already running with PID {task.get('pid')}")
+                    raise StartstopException(f"Task {name} is already running with PID {task['pid']}")
                 raise StartstopException(
                     f"Task {name} already exists and it's not running.\n"
                     "To remove it, run:\n"
@@ -368,27 +403,27 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
         }
         if split_output:
             task = create_task_cache(task, split_output=split_output)
-            shellpath = task["shell"]
-            stdoutpath = task["stdout"]
-            stderrpath = task["stderr"]
+            shell_path = task["shell"]
+            stdout_path = task["stdout"]
+            stderr_path = task["stderr"]
         else:
             task = create_task_cache(task, split_output=split_output)
-            shellpath = task["shell"]
-            logspath = task["logs"]
-        command = [shellpath, "-c", shlex.join(command)]
+            shell_path = task["shell"]
+            logs_path = task["logs"]
+        command = [shell_path, "-c", shlex_join(command)]
         if not attached:
             if split_output:
-                with open(stdoutpath, "wb") as stdout:
-                    with open(stderrpath, "wb") as stderr:
-                        proc = subprocess.Popen(
+                with open(stdout_path, "wb") as out:
+                    with open(stderr_path, "wb") as err:
+                        proc = Popen(
                             command,
                             start_new_session=True,
-                            stdout=stdout,
-                            stderr=stderr,
+                            stdout=out,
+                            stderr=err,
                         )
             else:
-                with open(logspath, "wb") as output:
-                    proc = subprocess.Popen(
+                with open(logs_path, "wb") as output:
+                    proc = Popen(
                         command,
                         start_new_session=True,
                         stdout=output,
@@ -398,13 +433,13 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
             update_task_cache(task)
             return task
     if attached:
-        await asyncio.create_subprocess_shell(*command)
+        return await create_subprocess_shell(*command)
 
 
 async def run_attached(command: List[str], name=None):
     proc = await run(command, name=name, attached=True)
-    for sig in [signal.SIGINT, signal.SIGTERM]:
-        signal.signal(sig, signal_handler(proc))
+    for sig in [SIGINT, SIGTERM]:
+        signal(sig, signal_handler(proc))
     await proc.wait()
 
 
@@ -414,7 +449,7 @@ def start_task(task_id=None, name=None):
             task = find_task_by_name(name)
             if task is not None:
                 if is_task_running(task):
-                    raise StartstopException(f"Task {name} is already running with PID {task.get('pid')}")
+                    raise StartstopException(f"Task {name} is already running with PID {task['pid']}")
             else:
                 raise StartstopException(f"No task with name {name}")
         else:
@@ -423,27 +458,27 @@ def start_task(task_id=None, name=None):
                 raise StartstopException(f"No task with ID {task_id}")
 
         if task["name"] is not None:
-            dirname = f"{task['name']}-{task['id']}"
+            dir_name = f"{task['name']}-{task['id']}"
         else:
-            dirname = task["id"]
-        dirpath = CACHE_DIR / dirname
+            dir_name = task["id"]
+        dir_path = CACHE_DIR / dir_name
         command = [task["shell"], "-c"] + task["command"]
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         if task.get("stdout") is not None:
-            task["stdout"] = str(dirpath / f"{dirname}-{timestamp}.out")
-            task["stderr"] = str(dirpath / f"{dirname}-{timestamp}.err")
-            with open(task["stdout"], "wb") as stdout:
-                with open(task["stderr"], "wb") as stderr:
-                    proc = subprocess.Popen(
+            task["stdout"] = str(dir_path / f"{dir_name}-{timestamp}.out")
+            task["stderr"] = str(dir_path / f"{dir_name}-{timestamp}.err")
+            with open(task["stdout"], "wb") as out:
+                with open(task["stderr"], "wb") as err:
+                    proc = Popen(
                         command,
                         start_new_session=True,
-                        stdout=stdout,
-                        stderr=stderr,
+                        stdout=out,
+                        stderr=err,
                     )
         else:
-            task["logs"] = str(dirpath / f"{dirname}-{timestamp}.log")
+            task["logs"] = str(dir_path / f"{dir_name}-{timestamp}.log")
             with open(task["logs"], "wb") as output:
-                proc = subprocess.Popen(
+                proc = Popen(
                     command,
                     start_new_session=True,
                     stdout=output,
@@ -452,7 +487,7 @@ def start_task(task_id=None, name=None):
         task["pid"] = str(proc.pid)
         task["started_at"] = timestamp
         update_task_cache(task)
-        return task
+
 
 def stop_task(task_id=None, name=None):
     with AtomicOpen(LOCK_PATH):
@@ -468,11 +503,124 @@ def stop_task(task_id=None, name=None):
             if task is None:
                 raise StartstopException(f"No task with ID {task_id}")
 
-        os.kill(int(task["pid"]), signal.SIGTERM)
-        while is_task_running(task):
-            time.sleep(BUSY_LOOP_INTERVAL)
+    # We kill and busy wait outside the above file lock for better parallel performance
+    kill(int(task["pid"]), SIGTERM)
+    while True:
+        # TODO add timeout
+        with AtomicOpen(LOCK_PATH):
+            if not is_task_running(task):
+                break
+        sleep(BUSY_LOOP_INTERVAL)
 
-        return task
+
+def remove_all_tasks():
+    with AtomicOpen(LOCK_PATH):
+        for filename in listdir(CACHE_DIR):
+            path = abspath(join(CACHE_DIR, filename, "task.json"))
+            try:
+                with open(path) as f:
+                    task = load(f)
+                    if is_task_running(task):
+                        print_error(f"Cannot remove task with ID {task['id']} since it's running")
+                    else:
+                        dir_path = abspath(join(CACHE_DIR, filename))
+                        rmtree(dir_path)
+            except (NotADirectoryError, FileNotFoundError, ValueError):
+                pass
+
+
+def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
+    try:
+        if rm_all:
+            remove_all_tasks()
+        else:
+            try:
+                task_id = str(int(task_name_or_id))
+                name = None
+            except (ValueError, TypeError):
+                task_id = None
+                name = task_name_or_id
+
+            if task_id is not None:
+                remove_task_by_id(task_id)
+            else:
+                remove_task_by_name(name)
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+    return True
+
+
+def start(task_name_or_id: str) -> bool:
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    try:
+        start_task(task_id=task_id, name=name)
+        return True
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+
+
+def stop(task_name_or_id: str):
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    try:
+        stop_task(task_id=task_id, name=name)
+        return True
+    except StartstopException as e:
+        print_error(str(e))
+        return False
+
+
+def ls(ls_all=False):
+    tasks = []
+    with AtomicOpen(LOCK_PATH):
+        for filename in listdir(CACHE_DIR):
+            path = abspath(join(CACHE_DIR, filename, "task.json"))
+            try:
+                with open(path) as f:
+                    task = load(f)
+                    if is_task_running(task):
+                        started_at = datetime.strptime(task["started_at"], TIMESTAMP_FMT)
+                        diff = datetime.now() - started_at
+                        task["uptime"] = format_seconds(int(diff.total_seconds()))
+                        tasks.append(task)
+                    elif ls_all:
+                        task["pid"] = "-"
+                        task["uptime"] = "-"
+                        tasks.append(task)
+            except (NotADirectoryError, FileNotFoundError, ValueError):
+                pass
+
+    name_len_max = 4
+    for task in tasks:
+        if task["name"] is not None and len(task["name"]) > name_len_max:
+            name_len_max = len(task["name"])
+
+    columns = get_terminal_size((80, 20)).columns
+    name_size = min(name_len_max, 16)
+    command_size = columns - 21 - name_size
+    template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
+    template = template.replace("NAME_SIZE", str(name_size))
+    template = template.replace("COMMAND_SIZE", str(command_size))
+    print(template.format("ID", "NAME", "COMMAND", "UPTIME", "PID"))
+    for task in tasks:
+        print(template.format(task["id"], task["name"] or "-", shlex_join(task["command"]), task["uptime"], task["pid"]))
+
+#######
+# MISC
+
 
 def format_seconds(seconds, long=False):
     if long:
@@ -496,130 +644,54 @@ def format_seconds(seconds, long=False):
 def print_error(msg: str, *args, **kwargs):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
 
+
 def print_warning(msg: str, *args, **kwargs):
     print(f"{bcolors.WARNING}{msg}{bcolors.ENDC}", *args, **kwargs)
+
 
 def print_success(msg: str, *args, **kwargs):
     print(f"{bcolors.OKGREEN}{msg}{bcolors.ENDC}", *args, **kwargs)
 
-def rm(task_name_or_id: str):
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
-
-    try:
-        if task_id is not None:
-            remove_task_by_id(task_id)
-        else:
-            remove_task_by_name(name)
-    except StartstopException as e:
-        print_error(str(e))
-        return False
-    return True
-
-def start(task_name_or_id: str):
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
-
-    try:
-        task = start_task(task_id=task_id, name=name)
-        return True
-    except StartstopException as e:
-        print_error(str(e))
-        return False
-
-def stop(task_name_or_id: str):
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
-
-    try:
-        task = stop_task(task_id=task_id, name=name)
-        return True
-    except StartstopException as e:
-        print_error(str(e))
-        return False
-
-def ls(ls_all=False):
-    tasks = []
-    with AtomicOpen(LOCK_PATH):
-        for filename in os.listdir(CACHE_DIR):
-            path = abspath(join(CACHE_DIR, filename, "task.json"))
-            try:
-                with open(path) as f:
-                    task = json.load(f)
-                    if is_task_running(task):
-                        started_at = datetime.strptime(task["started_at"], TIMESTAMP_FMT)
-                        diff = datetime.now() - started_at
-                        task["uptime"] = format_seconds(int(diff.total_seconds()))
-                        tasks.append(task)
-                    elif ls_all:
-                        task["pid"] = "-"
-                        task["uptime"] = "-"
-                        tasks.append(task)
-            except (NotADirectoryError, FileNotFoundError, ValueError):
-                pass
-
-    name_len_max = 4
-    for task in tasks:
-        if task["name"] is not None and len(task["name"]) > name_len_max:
-            name_len_max = len(task["name"])
-
-    columns = shutil.get_terminal_size((80, 20)).columns
-    name_size = min(name_len_max, 16)
-    command_size = columns - 21 - name_size
-    template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
-    template = template.replace("NAME_SIZE", str(name_size))
-    template = template.replace("COMMAND_SIZE", str(command_size))
-    print(template)
-    print(template.format("ID", "NAME", "COMMAND", "UPTIME", "PID"))
-    for task in tasks:
-        print(template.format(task["id"], task["name"] or "-", shlex.join(task["command"]), task["uptime"], task["pid"]))
 
 def main():
     try:
-        if len(sys.argv) == 1:
-            sys.exit(1)
-        global_args, option, option_args, command = parse_args(sys.argv)
-        #print(global_args, option, option_args, command)
+        if len(argv) == 1:
+            print_error("No option provided. Use -h for help.")
+            exit(1)
+        global_args, option, option_args, command = parse_args(argv)
+
         if option == "run":
             name = option_args.get("n") or option_args.get("name") or None
             if name is not None:
-                if not re.match(r"^[a-zA-Z_]+$", name):
+                if not match(r"^[a-zA-Z_]+$", name):
                     raise StartstopException("Only letters and underscore are allowed in task name")
             attached = option_args.get("a") or option_args.get("attached")
             if attached:
-                asyncio.run(run_attached(command, name=name))
+                asyncio_run(run_attached(command, name=name))
             else:
-                asyncio.run(run(command, name=name))
+                asyncio_run(run(command, name=name))
 
         elif option == "rm":
-            pool = ThreadPool(len(command))
-            results = pool.map(rm, command)
-            if not all(results):
-                sys.exit(1)
+            rm_all = option_args.get("a") or option_args.get("all") or None
+            if rm_all is True:
+                rm(None, rm_all=rm_all)
+            else:
+                pool = ThreadPool(len(command))
+                results = pool.map(rm, command)
+                if not all(results):
+                    exit(1)
 
         elif option == "start":
             pool = ThreadPool(len(command))
             results = pool.map(start, command)
             if not all(results):
-                sys.exit(1)
+                exit(1)
 
         elif option == "stop":
             pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
-                sys.exit(1)
+                exit(1)
 
         elif option == "ls":
             ls_all = option_args.get("a") or option_args.get("all")
@@ -627,7 +699,7 @@ def main():
 
     except StartstopException as e:
         print_error(str(e))
-        sys.exit(1)
+        exit(1)
 
 
 if __name__ == "__main__":

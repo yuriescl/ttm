@@ -2,9 +2,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-*.sqlite3
-
-dist/
+/.idea/
+/dist/
 /startstop.c
 /startstop
 

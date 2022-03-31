@@ -84,7 +84,7 @@ class bcolors:
 ##############
 # ARG PARSING
 
-def arg_requires_value(arg: str, option=None) -> bool:
+def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     def dashes(a: str):
         return "-" if len(a) == 1 else "--"
 
@@ -355,7 +355,7 @@ def remove_task_by_id(task_id: str):
         raise StartstopException(f"No task with ID {task_id}")
 
 
-def signal_handler(process):
+def signal_handler(process: Process):
     def wrapper(signum, frame):
         process.send_signal(signum)
         if signum == SIGINT:
@@ -384,7 +384,7 @@ def generate_id():
 #############
 # OPERATIONS
 
-async def run(command: List[str], name=None, attached=False, split_output=False) -> Union[Task, Process]:
+async def run(command: List[str], name: str = None, attached=False, split_output=False) -> Union[Task, Process]:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -436,14 +436,14 @@ async def run(command: List[str], name=None, attached=False, split_output=False)
         return await create_subprocess_shell(*command)
 
 
-async def run_attached(command: List[str], name=None):
+async def run_attached(command: List[str], name: str = None):
     proc = await run(command, name=name, attached=True)
     for sig in [SIGINT, SIGTERM]:
         signal(sig, signal_handler(proc))
     await proc.wait()
 
 
-def start_task(task_id=None, name=None):
+def start_task(task_id: str = None, name: str = None):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -489,7 +489,7 @@ def start_task(task_id=None, name=None):
         update_task_cache(task)
 
 
-def stop_task(task_id=None, name=None):
+def stop_task(task_id: str = None, name: str = None):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)

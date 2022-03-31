@@ -1,11 +1,11 @@
 Tiny process manager for Linux, MacOS and Unix-like systems.  
-Written in Python, compiled to a ~300KB standalone executable binary (download
+Written in Python, compiled to a ~320KB standalone executable binary (download
 [here](https://raw.githubusercontent.com/yuriescl/startstop/dev/startstop)).
 
 Features:
 - No root access required
 - Start, watch, and stop tasks
-- Single script written in pure Python - easy to audit and compile
+- Single script with no external dependencies - easy to audit and compile
 - Daemon-less
 
 Alternative to:
@@ -54,6 +54,7 @@ This build worked on Debian 11:
 sudo apt install build-essential python3-dev
 git clone https://github.com/yuriescl/startstop
 cd startstop
+poetry shell
 cython -3 --embed -o startstop.c startstop.py
 gcc -Os -I /usr/include/python3.9 -o startstop startstop.c -lpython3.9 -lpthread -lm -lutil -ldl
 strip -s -R .comment -R .gnu.version --strip-unneeded startstop

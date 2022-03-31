@@ -1,7 +1,9 @@
 Tiny process manager for Linux, MacOS and Unix-like systems.  
 Written as a single Python script (download [here](https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop)).
 
-**Python3.8+ is required to run this script.**
+Requirements:
+- `python` (3.8+)
+- `ps` (usually available by default)
 
 Features:
 - No root access required
@@ -73,12 +75,9 @@ Todo:
 - allow start/stop/rm non-parallel
 - test in pure Unix
 - what is user has no home dir?
-- add doc explaining how processes are tracked
 - add busy interval parameter used in busy loops
 - add timeout to stop(), and also maybe a -9 param to send kill -9
 - add JSON CLI input/output support
-- decide column widths for ls template
 - add --long to ls
 - add support for non-shell commands
 - add logs command
-- add rm -a

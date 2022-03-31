@@ -80,3 +80,4 @@ Todo:
 - add --long to ls
 - add support for non-shell commands
 - add logs command
+- add package to Debian

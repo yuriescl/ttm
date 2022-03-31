@@ -1,5 +1,5 @@
 Tiny process manager for Linux, MacOS and Unix-like systems.  
-Written as a single Python script (download [here](https://raw.githubusercontent.com/yuriescl/startstop/dev/startstop)).
+Written as a single Python script (download[here](https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop)).
 
 Features:
 - No root access required

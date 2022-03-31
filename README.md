@@ -15,28 +15,32 @@ Alternative to:
 Examples:
 ```bash
 # Running a script
-$ startstop run ./backup-database.sh --output /backups/database.sql
-$ startstop ls
+startstop run ./backup-database.sh --output /backups/database.sql
+startstop ls
+
 ID   NAME COMMAND                                              UPTIME PID    
 1    -    ./backup-database.sh --output /backups/database.sql  2s     742537 
-$ startstop stop 1
-$ startstop rm 1
+
+startstop stop 1
+startstop rm 1
 
 # Running Django server 
-$ startstop run --name mydjangoserver python manage.py runserver
-$ startstop rm mydjangoserver
+startstop run --name mydjangoserver python manage.py runserver
+startstop rm mydjangoserver
+
 Cannot remove task while it's running.
 To stop it, run:
-$ startstop stop mydjangoserver
-$ startstop logs mydjangoserver
-$ startstop rm mydjangoserver
+
+startstop stop mydjangoserver
+startstop logs mydjangoserver
+startstop rm mydjangoserver
 ```
 
 ## Installation
 
 Download the script directly (recommended):
 ```bash
-curl https://raw.githubusercontent.com/yuriescl/startstop/dev/startstop -o startstop
+curl https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop -o startstop
 chmod +x startstop
 ./startstop
 ```
@@ -57,18 +61,6 @@ poetry env use python3.7
 poetry install
 poetry shell
 ```
-
-### Building the standalone binary
-
-This build worked on Debian 11:
-```bash
-sudo apt install python3-dev
-cython -3 --embed -o startstop.c startstop.py
-gcc -Os -I /usr/include/python3.9 -o startstop startstop.c -lpython3.9 -lpthread -lm -lutil -ldl
-strip -s -R .comment -R .gnu.version --strip-unneeded startstop
-```
-Replace `python3.9` with the target python version.
-
 
 Todo:
 - add -q global flag

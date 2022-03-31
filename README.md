@@ -44,11 +44,18 @@ chmod +x startstop
 
 ### Alternative installation methods
 
+#### Downloading the Python script directly
+```
+curl https://raw.githubusercontent.com/yuriescl/startstop/dev/startstop.py -o startstop.py
+python3 startstop.py
+```
+
 #### Installing through pip
 ```bash
 pip install startstop
 startstop  # or python -m startstop
 ```
+
 #### Compiling from source
 This build worked on Debian 11:
 ```bash
@@ -56,9 +63,7 @@ sudo apt install build-essential python3-dev
 git clone https://github.com/yuriescl/startstop
 cd startstop
 poetry shell
-cython -3 --embed -o startstop.c startstop.py
-gcc -Os -I /usr/include/python3.9 -o startstop startstop.c -lpython3.9 -lpthread -lm -lutil -ldl
-strip -s -R .comment -R .gnu.version --strip-unneeded startstop
+./compile.sh
 ```
 
 ## Development

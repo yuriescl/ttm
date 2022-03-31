@@ -16,20 +16,21 @@ Alternative to:
 Examples:
 ```bash
 # Running a script
-startstop run ./backup-database.sh --output /backups/database.sql
-startstop ls
-startstop stop 1
-startstop rm 1
+$ startstop run ./backup-database.sh --output /backups/database.sql
+$ startstop ls
+ID   NAME COMMAND                                              UPTIME PID    
+1    -    ./backup-database.sh --output /backups/database.sql  2s     742537 
+$ startstop stop 1
+$ startstop rm 1
 
 # Running Django server 
-startstop run --name mydjangoserver python manage.py runserver
-startstop ls
-startstop stop mydjangoserver
-startstop start mydjangoserver
-startstop rm mydjangoserver
-startstop stop mydjangoserver
-startstop logs mydjangoserver
-startstop rm mydjangoserver
+$ startstop run --name mydjangoserver python manage.py runserver
+$ startstop rm mydjangoserver
+Cannot remove task while it's running.
+To stop it, run:
+$ startstop stop mydjangoserver
+$ startstop logs mydjangoserver
+$ startstop rm mydjangoserver
 ```
 
 ## Installation

@@ -311,7 +311,7 @@ def remove_task_by_name(name: str):
         for filename in listdir(CACHE_DIR):
             filename_split = filename.split("-")
             if len(filename_split) == 1:
-                raise StartstopException(f"No task with name {name}")
+                continue
             else:
                 filename_task_name = filename_split[0]
 

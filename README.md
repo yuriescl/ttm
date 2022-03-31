@@ -13,7 +13,7 @@ Alternative to:
 - [docker](https://www.docker.com/)
 
 Examples:
-```bash
+```
 # Running a script
 startstop run ./backup-database.sh --output /backups/database.sql
 startstop ls
@@ -39,7 +39,7 @@ startstop rm mydjangoserver
 ## Installation
 
 Download the script directly (recommended):
-```bash
+```
 curl https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop -o startstop
 chmod +x startstop
 ./startstop
@@ -48,7 +48,7 @@ chmod +x startstop
 ### Alternative installation methods
 
 #### Installing through pip
-```bash
+```
 pip install startstop
 startstop  # or python -m startstop
 ```
@@ -56,7 +56,7 @@ startstop  # or python -m startstop
 ## Development
 
 ### Environment
-```bash
+```
 poetry env use python3.7
 poetry install
 poetry shell

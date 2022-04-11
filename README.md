@@ -79,4 +79,6 @@ Todo:
 - add JSON CLI input/output support
 - add --long to ls
 - add support for non-shell commands
-- add logs command
+- logs behavior with output containing only a line break
+- allow 'ls' sorting
+- allow specifying number of lines in 'logs'

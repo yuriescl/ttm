@@ -1,19 +1,21 @@
 #!/usr/bin/env python
+import time
+from sys import exit, stdout, stderr, argv, version_info
 
-from sys import exit, stderr, argv, version_info
 if version_info[0] < 3 or version_info[1] < 8:
     raise Exception("Python 3.8+ is required to run this program")
 
+import asyncio
+import io
+from io import SEEK_SET, SEEK_END
 from typing import List, Dict, Optional, Tuple, Union
-from re import match
+import re
+import os
 from datetime import datetime
-from shlex import join as shlex_join
+import shlex
 from time import sleep
-from json import load, dump
-from json.encoder import encode_basestring
-from os import makedirs, fsync, listdir, symlink, getuid, kill
+import json
 from os.path import join, abspath
-from asyncio import run as asyncio_run, create_subprocess_shell
 from asyncio.subprocess import Process
 from pathlib import Path
 from subprocess import check_output, Popen
@@ -24,7 +26,7 @@ from fcntl import lockf, LOCK_EX, LOCK_UN
 
 
 CACHE_DIR = Path.home() / ".startstop"
-makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 LOCK_PATH = Path(CACHE_DIR / "lock")
 LOCK_PATH.touch(exist_ok=True)
 
@@ -39,8 +41,219 @@ class StartstopException(Exception):
     pass
 
 
+class Tailer(object):
+    """
+    Code obtained from https://github.com/GreatFruitOmsk/tailhead/blob/master/tailhead/__init__.py
+    Copyright (c) 2012 Mike Thornton
+    Implements tailing and heading functionality like GNU tail and head
+    commands.
+    """
+
+    LINE_TERMINATORS = (b"\r\n", b"\n", b"\r")
+
+    def __init__(self, file, read_size=1024, end=False):
+        if not isinstance(file, io.IOBase) or isinstance(file, io.TextIOBase):
+            raise ValueError("io object must be in the binary mode")
+
+        self.read_size = read_size
+        self.file = file
+
+        if end:
+            self.file.seek(0, SEEK_END)
+
+    def splitlines(self, data):
+        return re.split(b"|".join(self.LINE_TERMINATORS), data)
+
+    def read(self, read_size=-1):
+        read_str = self.file.read(read_size)
+        return len(read_str), read_str
+
+    def prefix_line_terminator(self, data):
+        for t in self.LINE_TERMINATORS:
+            if data.startswith(t):
+                return t
+
+        return None
+
+    def suffix_line_terminator(self, data):
+        for t in self.LINE_TERMINATORS:
+            if data.endswith(t):
+                return t
+
+        return None
+
+    def seek_next_line(self):
+        where = self.file.tell()
+        offset = 0
+
+        while True:
+            data_len, data = self.read(self.read_size)
+            data_where = 0
+
+            if not data_len:
+                break
+
+            # Consider the following example: Foo\r | \nBar where " | " denotes current position,
+            # 'Foo\r' is the read part and '\nBar' is the remaining part.
+            # We should completely consume terminator "\r\n" by reading one extra byte.
+            if b"\r\n" in self.LINE_TERMINATORS and data[-1] == b"\r"[0]:
+                terminator_where = self.file.tell()
+                terminator_len, terminator_data = self.read(1)
+
+                if terminator_len and terminator_data[0] == b"\n"[0]:
+                    data_len += 1
+                    data += b"\n"
+                else:
+                    self.file.seek(terminator_where)
+
+            while data_where < data_len:
+                terminator = self.prefix_line_terminator(data[data_where:])
+                if terminator:
+                    self.file.seek(where + offset + data_where + len(terminator))
+                    return self.file.tell()
+                else:
+                    data_where += 1
+
+            offset += data_len
+            self.file.seek(where + offset)
+
+        return -1
+
+    def seek_previous_line(self):
+        where = self.file.tell()
+        offset = 0
+
+        while True:
+            if offset == where:
+                break
+
+            read_size = self.read_size if self.read_size <= where else where
+            self.file.seek(where - offset - read_size, SEEK_SET)
+            data_len, data = self.read(read_size)
+
+            # Consider the following example: Foo\r | \nBar where " | " denotes current position,
+            # '\nBar' is the read part and 'Foo\r' is the remaining part.
+            # We should completely consume terminator "\r\n" by reading one extra byte.
+            if b"\r\n" in self.LINE_TERMINATORS and data[0] == b"\n"[0]:
+                terminator_where = self.file.tell()
+                if terminator_where > data_len + 1:
+                    self.file.seek(where - offset - data_len - 1, SEEK_SET)
+                    terminator_len, terminator_data = self.read(1)
+
+                    if terminator_data[0] == b"\r"[0]:
+                        data_len += 1
+                        data = b"\r" + data
+
+                    self.file.seek(terminator_where)
+
+            data_where = data_len
+
+            while data_where > 0:
+                terminator = self.suffix_line_terminator(data[:data_where])
+                if terminator and offset == 0 and data_where == data_len:
+                    # The last character is a line terminator that finishes current line. Ignore it.
+                    data_where -= len(terminator)
+                elif terminator:
+                    self.file.seek(where - offset - (data_len - data_where))
+                    return self.file.tell()
+                else:
+                    data_where -= 1
+
+            offset += data_len
+
+        if where == 0:
+            # Nothing more to read.
+            return -1
+        else:
+            # Very first line.
+            self.file.seek(0)
+            return 0
+
+    def tail(self, lines=10):
+        self.file.seek(0, SEEK_END)
+
+        for i in range(lines):
+            if self.seek_previous_line() == -1:
+                break
+
+        data = self.file.read()
+
+        for t in self.LINE_TERMINATORS:
+            if data.endswith(t):
+                # Only terminators _between_ lines should be preserved.
+                # Otherwise terminator of the last line will be treated as separtaing line and empty line.
+                data = data[: -len(t)]
+                break
+
+        if data:
+            return self.splitlines(data)
+        else:
+            return []
+
+    def head(self, lines=10):
+        if lines < 0:
+            self.file.seek(0, SEEK_END)
+            for i in range(-lines):
+                if self.seek_previous_line() == -1:
+                    break
+        else:
+            self.file.seek(0)
+            for i in range(lines):
+                if self.seek_next_line() == -1:
+                    break
+
+        end_pos = self.file.tell()
+
+        self.file.seek(0)
+        data = self.file.read(end_pos)
+
+        for t in self.LINE_TERMINATORS:
+            if data.endswith(t):
+                # Only terminators _between_ lines should be preserved.
+                # Otherwise terminator of the last line will be treated as separtaing line and empty line.
+                data = data[: -len(t)]
+                break
+
+        if data:
+            return self.splitlines(data)
+        else:
+            return []
+
+    def follow(self):
+        trailing = True
+
+        while True:
+            where = self.file.tell()
+
+            if where > os.fstat(self.file.fileno()).st_size:
+                # File was truncated.
+                where = 0
+                self.file.seek(where)
+
+            line = self.file.readline()
+
+            if line:
+                if trailing and line in self.LINE_TERMINATORS:
+                    # This is just the line terminator added to the end of the file
+                    # before a new line, ignore.
+                    trailing = False
+                    continue
+
+                terminator = self.suffix_line_terminator(line)
+                if terminator:
+                    line = line[: -len(terminator)]
+
+                trailing = False
+                yield line
+            else:
+                trailing = True
+                self.file.seek(where)
+                yield None
+
+
 class AtomicOpen:
-    """ https://stackoverflow.com/a/46407326/3705710 """
+    """https://stackoverflow.com/a/46407326/3705710"""
+
     def __init__(self, path, *args, noop=False, **kwargs):
         if noop is False:
             self.file = open(path, *args, **kwargs)
@@ -64,7 +277,7 @@ class AtomicOpen:
     def __exit__(self, exc_type=None, exc_value=None, traceback=None):
         if self.noop is False:
             self.file.flush()
-            fsync(self.file.fileno())
+            os.fsync(self.file.fileno())
             self.unlock_file(self.file)
             self.file.close()
             if exc_type is not None:
@@ -74,20 +287,22 @@ class AtomicOpen:
 
 
 class bcolors:
-    """ https://stackoverflow.com/a/287944/3705710 """
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    """https://stackoverflow.com/a/287944/3705710"""
+
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 
 ##############
 # ARG PARSING
+
 
 def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     def dashes(a: str):
@@ -112,6 +327,9 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     elif option == "ls":
         if arg in ["a", "all"]:
             return False
+    elif option == "logs":
+        if arg in ["f", "follow", "head"]:
+            return False
     raise StartstopException(f"Unrecognized argument {dashes(arg)}{arg}")
 
 
@@ -119,7 +337,9 @@ def is_value_next(args: List[str], pos: int) -> bool:
     return pos + 1 < len(args) and not args[pos + 1].startswith("-")
 
 
-def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Optional[List[str]]]:
+def parse_args(
+    args_to_parse: List[str],
+) -> Tuple[Dict, Optional[str], Dict, Optional[List[str]]]:
     args = args_to_parse[1:]
     global_args = {}
     option = None
@@ -128,7 +348,7 @@ def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Opt
         if pos >= len(args):
             break
         current_arg = args[pos]
-        if current_arg in ["run", "start", "stop", "rm", "ls"]:
+        if current_arg in ["run", "start", "stop", "rm", "ls", "logs"]:
             option = current_arg
             pos += 1
             break
@@ -136,7 +356,9 @@ def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Opt
             current_arg = current_arg[2:]
             if arg_requires_value(current_arg, option):
                 if not is_value_next(args, pos):
-                    raise StartstopException(f"Argument --{current_arg} requires a value")
+                    raise StartstopException(
+                        f"Argument --{current_arg} requires a value"
+                    )
                 global_args[current_arg] = args[pos + 1]
                 pos += 2
                 continue
@@ -149,7 +371,9 @@ def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Opt
             if len(current_arg) == 1:
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise StartstopException(f"Argument -{current_arg} requires a value")
+                        raise StartstopException(
+                            f"Argument -{current_arg} requires a value"
+                        )
                     global_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -184,7 +408,9 @@ def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Opt
                 current_arg = current_arg[2:]
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise StartstopException(f"Argument --{current_arg} requires a value")
+                        raise StartstopException(
+                            f"Argument --{current_arg} requires a value"
+                        )
                     option_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -224,6 +450,7 @@ def parse_args(args_to_parse: List[str]) -> Tuple[Dict, Optional[str], Dict, Opt
 
     return global_args, option, option_args, command
 
+
 ##################
 # FILE OPERATIONS
 
@@ -234,32 +461,36 @@ def create_task_cache(task: Task, split_output=False) -> Task:
     else:
         dir_name = task["id"]
     dir_path = CACHE_DIR / dir_name
-    makedirs(dir_path, exist_ok=True)
+    os.makedirs(dir_path, exist_ok=True)
     filepath = dir_path / "task.json"
     timestamp = datetime.now().strftime(TIMESTAMP_FMT)
     shell_path = str(dir_path / task["id"])
     try:
-        symlink("/bin/sh", shell_path)
+        os.symlink("/bin/sh", shell_path)
     except FileExistsError:
         pass
     if split_output:
         stdout_path = dir_path / f"{dir_name}-{timestamp}.out"
         stderr_path = dir_path / f"{dir_name}-{timestamp}.err"
-        task.update({
-            "shell": str(shell_path),
-            "stdout": str(stdout_path),
-            "stderr": str(stderr_path),
-            "started_at": timestamp,
-        })
+        task.update(
+            {
+                "shell": str(shell_path),
+                "stdout": str(stdout_path),
+                "stderr": str(stderr_path),
+                "started_at": timestamp,
+            }
+        )
     else:
         logs_path = dir_path / f"{dir_name}-{timestamp}.log"
-        task.update({
-            "shell": str(shell_path),
-            "logs": str(logs_path),
-            "started_at": timestamp,
-        })
+        task.update(
+            {
+                "shell": str(shell_path),
+                "logs": str(logs_path),
+                "started_at": timestamp,
+            }
+        )
     with open(filepath, "w") as f:
-        dump(task, f)
+        json.dump(task, f)
     return task
 
 
@@ -271,31 +502,31 @@ def update_task_cache(task: Task):
     dir_path = CACHE_DIR / dir_name
     filepath = dir_path / "task.json"
     with open(filepath, "w") as f:
-        dump(task, f)
+        json.dump(task, f)
 
 
 def is_task_running(task: Task) -> bool:
-    output = check_output(['ps', '-u', str(getuid()), '-o', 'pid,args'])
+    output = check_output(["ps", "-u", str(os.getuid()), "-o", "pid,args"])
     for line in output.splitlines():
         decoded = line.decode().strip()
-        ps_pid, cmdline = decoded.split(' ', 1)
-        if ps_pid == task["pid"]:
+        ps_pid, cmdline = decoded.split(" ", 1)
+        if task.get("pid") is not None and ps_pid == task["pid"]:
             if cmdline.startswith(f"{task['shell']} -c"):
                 return True
     return False
 
 
 def find_task_by_name(name: str) -> Optional[Dict]:
-    for filename in listdir(CACHE_DIR):
+    for filename in os.listdir(CACHE_DIR):
         if filename.split("-")[0] == name:
             path = abspath(join(CACHE_DIR, filename, "task.json"))
             with open(path) as f:
-                return load(f)
+                return json.load(f)
     return None
 
 
 def find_task_by_id(task_id: str) -> Optional[Dict]:
-    for filename in listdir(CACHE_DIR):
+    for filename in os.listdir(CACHE_DIR):
         try:
             filename_split = filename.split("-")
             if len(filename_split) == 1:
@@ -305,7 +536,7 @@ def find_task_by_id(task_id: str) -> Optional[Dict]:
             if filename_task_id == task_id:
                 path = abspath(join(CACHE_DIR, filename, "task.json"))
                 with open(path) as f:
-                    return load(f)
+                    return json.load(f)
         except IndexError:
             pass
     return None
@@ -313,7 +544,7 @@ def find_task_by_id(task_id: str) -> Optional[Dict]:
 
 def remove_task_by_name(name: str):
     with AtomicOpen(LOCK_PATH):
-        for filename in listdir(CACHE_DIR):
+        for filename in os.listdir(CACHE_DIR):
             filename_split = filename.split("-")
             if len(filename_split) == 1:
                 continue
@@ -336,7 +567,7 @@ def remove_task_by_name(name: str):
 
 def remove_task_by_id(task_id: str):
     with AtomicOpen(LOCK_PATH):
-        for filename in listdir(CACHE_DIR):
+        for filename in os.listdir(CACHE_DIR):
             try:
                 filename_split = filename.split("-")
                 if len(filename_split) == 1:
@@ -360,7 +591,7 @@ def remove_task_by_id(task_id: str):
         raise StartstopException(f"No task with ID {task_id}")
 
 
-def signal_handler(process: Process):
+def process_signal_handler(process: Process):
     def wrapper(signum, frame):
         process.send_signal(signum)
         if signum == SIGINT:
@@ -369,16 +600,20 @@ def signal_handler(process: Process):
         if signum == SIGTERM:
             print("Terminated", file=stderr)
             exit(1)
+
     return wrapper
 
 
 def generate_id():
     existing_ids = []
-    for filename in listdir(CACHE_DIR):
+    for filename in os.listdir(CACHE_DIR):
         try:
             existing_ids.append(str(int(filename)))
         except ValueError:
-            pass
+            try:
+                existing_ids.append(str(int(filename.split("-")[1])))
+            except (ValueError, IndexError):
+                pass
     for i in range(1, 10000):
         str_i = str(i)
         if str_i not in existing_ids:
@@ -389,13 +624,18 @@ def generate_id():
 #############
 # OPERATIONS
 
-async def run(command: List[str], name: str = None, attached=False, split_output=False) -> Union[Task, Process]:
+
+async def run(
+    command: List[str], name: str = None, attached=False, split_output=False
+) -> Union[Task, Process]:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
             if task:
                 if is_task_running(task):
-                    raise StartstopException(f"Task {name} is already running with PID {task['pid']}")
+                    raise StartstopException(
+                        f"Task {name} is already running with PID {task['pid']}"
+                    )
                 raise StartstopException(
                     f"Task {name} already exists and it's not running.\n"
                     "To remove it, run:\n"
@@ -415,13 +655,14 @@ async def run(command: List[str], name: str = None, attached=False, split_output
             task = create_task_cache(task, split_output=split_output)
             shell_path = task["shell"]
             logs_path = task["logs"]
-        command = [shell_path, "-c", shlex_join(command)]
         if not attached:
             if split_output:
                 with open(stdout_path, "wb") as out:
                     with open(stderr_path, "wb") as err:
                         proc = Popen(
-                            command,
+                            shlex.join(command),
+                            executable=shell_path,
+                            shell=True,
                             start_new_session=True,
                             stdout=out,
                             stderr=err,
@@ -429,7 +670,9 @@ async def run(command: List[str], name: str = None, attached=False, split_output
             else:
                 with open(logs_path, "wb") as output:
                     proc = Popen(
-                        command,
+                        shlex.join(command),
+                        executable=shell_path,
+                        shell=True,
                         start_new_session=True,
                         stdout=output,
                         stderr=output,
@@ -438,13 +681,13 @@ async def run(command: List[str], name: str = None, attached=False, split_output
             update_task_cache(task)
             return task
     if attached:
-        return await create_subprocess_shell(*command)
+        return await asyncio.create_subprocess_shell(*command)
 
 
 async def run_attached(command: List[str], name: str = None):
     proc = await run(command, name=name, attached=True)
     for sig in [SIGINT, SIGTERM]:
-        signal(sig, signal_handler(proc))
+        signal(sig, process_signal_handler(proc))
     await proc.wait()
 
 
@@ -454,7 +697,9 @@ def start_task(task_id: str = None, name: str = None):
             task = find_task_by_name(name)
             if task is not None:
                 if is_task_running(task):
-                    raise StartstopException(f"Task {name} is already running with PID {task['pid']}")
+                    raise StartstopException(
+                        f"Task {name} is already running with PID {task['pid']}"
+                    )
             else:
                 raise StartstopException(f"No task with name {name}")
         else:
@@ -509,7 +754,7 @@ def stop_task(task_id: str = None, name: str = None):
                 raise StartstopException(f"No task with ID {task_id}")
 
     # We kill and busy wait outside the above file lock for better parallel performance
-    kill(int(task["pid"]), SIGTERM)
+    os.kill(int(task["pid"]), SIGTERM)
     while True:
         # TODO add timeout
         with AtomicOpen(LOCK_PATH):
@@ -520,13 +765,15 @@ def stop_task(task_id: str = None, name: str = None):
 
 def remove_all_tasks():
     with AtomicOpen(LOCK_PATH):
-        for filename in listdir(CACHE_DIR):
+        for filename in os.listdir(CACHE_DIR):
             path = abspath(join(CACHE_DIR, filename, "task.json"))
             try:
                 with open(path) as f:
-                    task = load(f)
+                    task = json.load(f)
                     if is_task_running(task):
-                        print_error(f"Cannot remove task with ID {task['id']} since it's running")
+                        print_error(
+                            f"Cannot remove task with ID {task['id']} since it's running"
+                        )
                     else:
                         dir_path = abspath(join(CACHE_DIR, filename))
                         rmtree(dir_path)
@@ -554,6 +801,60 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
         print_error(str(e))
         return False
     return True
+
+
+def logs(task_name_or_id: Optional[str], follow=False, head=False):
+    def print_lines(lines):
+        if isinstance(lines, list):
+            for l in lines:
+                stdout.buffer.write(l)
+                stdout.buffer.write("\n".encode())
+        elif isinstance(lines, bytes):
+            stdout.buffer.write(lines)
+            stdout.buffer.write("\n".encode())
+        stdout.buffer.flush()
+
+    if follow and head:
+        raise StartstopException("--follow and --head cannot be used together")
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+
+    if task_id is not None:
+        task = find_task_by_id(task_id)
+        if task is None:
+            raise StartstopException(f"No task with ID {task_id}")
+    else:
+        task = find_task_by_name(name)
+        if task is None:
+            raise StartstopException(f"No task with name {name}")
+
+    logs_path = task.get("logs")
+    if logs_path is None:
+        raise StartstopException(
+            "Task was created using --split-output, use 'stdout' or 'stderr' instead of 'logs'"
+        )
+
+    if not head and follow:
+        with open(logs_path, "rb") as file:
+            print_lines(Tailer(file).tail())
+
+    with open(logs_path, "rb") as file:
+        if head:
+            print_lines(Tailer(file).head())
+        elif follow:
+            for line in Tailer(file, end=True).follow():
+                if line is None:
+                    time.sleep(0.01)
+                    continue
+                print_lines(line)
+        else:
+            print_lines(Tailer(file).tail())
+
+        print_lines([])
 
 
 def start(task_name_or_id: str) -> bool:
@@ -591,14 +892,16 @@ def stop(task_name_or_id: str):
 def ls(ls_all=False):
     tasks = []
     with AtomicOpen(LOCK_PATH):
-        for filename in listdir(CACHE_DIR):
+        for filename in os.listdir(CACHE_DIR):
             path = abspath(join(CACHE_DIR, filename, "task.json"))
             try:
                 with open(path) as f:
-                    task = load(f)
+                    task = json.load(f)
+                    task["started_at"] = datetime.strptime(
+                        task["started_at"], TIMESTAMP_FMT
+                    )
                     if is_task_running(task):
-                        started_at = datetime.strptime(task["started_at"], TIMESTAMP_FMT)
-                        diff = datetime.now() - started_at
+                        diff = datetime.now() - task["started_at"]
                         task["uptime"] = format_seconds(int(diff.total_seconds()))
                         tasks.append(task)
                     elif ls_all:
@@ -613,15 +916,26 @@ def ls(ls_all=False):
         if task["name"] is not None and len(task["name"]) > name_len_max:
             name_len_max = len(task["name"])
 
+    tasks = sorted(tasks, key=lambda d: d["started_at"])
+
     columns = get_terminal_size((80, 20)).columns
     name_size = min(name_len_max, 16)
     command_size = columns - 21 - name_size
-    template = r"{0:4} {1:NAME_SIZE} {2:COMMAND_SIZE} {3:6} {4:7}"
+    template = r"{0:4} {1:NAME_SIZE} {2:6} {3:7} {4:COMMAND_SIZE}"
     template = template.replace("NAME_SIZE", str(name_size))
     template = template.replace("COMMAND_SIZE", str(command_size))
-    print(template.format("ID", "NAME", "COMMAND", "UPTIME", "PID"))
+    print(template.format("ID", "NAME", "UPTIME", "PID", "COMMAND"))
     for task in tasks:
-        print(template.format(task["id"], task["name"] or "-", shlex_join(task["command"]), task["uptime"], task["pid"]))
+        print(
+            template.format(
+                task["id"],
+                task["name"] or "-",
+                task["uptime"],
+                task["pid"],
+                shlex.join(task["command"]),
+            )
+        )
+
 
 #######
 # MISC
@@ -646,6 +960,13 @@ def format_seconds(seconds, long=False):
         return s
 
 
+def signal_handler(signum, frame):
+    if signum == SIGINT:
+        exit(1)
+    if signum == SIGTERM:
+        exit(1)
+
+
 def print_error(msg: str, *args, **kwargs):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
 
@@ -659,6 +980,9 @@ def print_success(msg: str, *args, **kwargs):
 
 
 def main():
+    for sig in [SIGINT, SIGTERM]:
+        signal(sig, signal_handler)
+
     try:
         if len(argv) == 1:
             print_error("No option provided. Use -h for help.")
@@ -673,13 +997,15 @@ def main():
         elif option == "run":
             name = option_args.get("n") or option_args.get("name") or None
             if name is not None:
-                if not match(r"^[a-zA-Z_]+$", name):
-                    raise StartstopException("Only letters and underscore are allowed in task name")
+                if not re.match(r"^[a-zA-Z_]+$", name):
+                    raise StartstopException(
+                        "Only letters and underscore are allowed in task name"
+                    )
             attached = option_args.get("a") or option_args.get("attached")
             if attached:
-                asyncio_run(run_attached(command, name=name))
+                asyncio.run(run_attached(command, name=name))
             else:
-                asyncio_run(run(command, name=name))
+                asyncio.run(run(command, name=name))
 
         elif option == "rm":
             rm_all = option_args.get("a") or option_args.get("all")
@@ -706,6 +1032,15 @@ def main():
         elif option == "ls":
             ls_all = option_args.get("a") or option_args.get("all")
             ls(ls_all=ls_all)
+
+        elif option == "logs":
+            if len(command) > 1:
+                raise StartstopException(
+                    "A single task ID or name must be provided to 'logs'"
+                )
+            follow = option_args.get("f") or option_args.get("follow") or False
+            head = option_args.get("head") or False
+            logs(command[0], follow=follow, head=head)
 
     except StartstopException as e:
         print_error(str(e))

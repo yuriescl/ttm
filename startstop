@@ -2,6 +2,12 @@
 import time
 from sys import exit, stdout, stderr, argv, version_info
 
+# startstop
+# MIT License
+# Copyright (c) 2022 Yuri Escalianti <yuriescl@gmail.com>
+# Homepage: https://github.com/yuriescl/startstop
+
+from sys import exit, stderr, argv, version_info
 if version_info[0] < 3 or version_info[1] < 8:
     raise Exception("Python 3.8+ is required to run this program")
 

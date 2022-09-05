@@ -4,5 +4,5 @@ __pycache__/
 
 /.idea/
 /dist/
-
+/.vim/coc-settings.json
 

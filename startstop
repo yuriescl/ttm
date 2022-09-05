@@ -1,34 +1,33 @@
 #!/usr/bin/env python
-import time
-from sys import exit, stdout, stderr, argv, version_info
 
 # startstop
 # MIT License
 # Copyright (c) 2022 Yuri Escalianti <yuriescl@gmail.com>
 # Homepage: https://github.com/yuriescl/startstop
 
-from sys import exit, stderr, argv, version_info
-if version_info[0] < 3 or version_info[1] < 8:
-    raise Exception("Python 3.8+ is required to run this program")
-
 import asyncio
-import io
-from io import SEEK_SET, SEEK_END
-from typing import List, Dict, Optional, Tuple, Union
-import re
-import os
-from datetime import datetime
-import shlex
-from time import sleep
-import json
-from os.path import join, abspath
 from asyncio.subprocess import Process
-from pathlib import Path
-from subprocess import check_output, Popen
+from datetime import datetime
+from fcntl import LOCK_EX, LOCK_UN, lockf
+import io
+from io import SEEK_END, SEEK_SET
+import json
 from multiprocessing.dummy import Pool as ThreadPool
-from shutil import rmtree, get_terminal_size
+import os
+from os.path import abspath, join
+from pathlib import Path
+import re
+import shlex
+from shutil import get_terminal_size, rmtree
 from signal import SIGINT, SIGTERM, signal
-from fcntl import lockf, LOCK_EX, LOCK_UN
+from subprocess import Popen, check_output
+from sys import argv, exit, stdout, stderr, version_info
+import time
+from time import sleep
+from typing import Dict, List, Optional, Tuple, Union
+
+if version_info[0] < 3 or version_info[1] < 9:
+    raise Exception("Python 3.9+ is required to run this program")
 
 
 CACHE_DIR = Path.home() / ".startstop"
@@ -347,7 +346,7 @@ def parse_args(
     args_to_parse: List[str],
 ) -> Tuple[Dict, Optional[str], Dict, Optional[List[str]]]:
     args = args_to_parse[1:]
-    global_args = {}
+    global_args: Dict[str, Union[str, bool]] = {}
     option = None
     pos = 0
     while True:
@@ -400,7 +399,7 @@ def parse_args(
             raise StartstopException(f"Unrecognized option {current_arg}")
         pos += 1
 
-    option_args = {}
+    option_args: Dict[str, Union[str, bool]] = {}
     command = None
 
     if option is not None:
@@ -522,7 +521,7 @@ def is_task_running(task: Task) -> bool:
     return False
 
 
-def find_task_by_name(name: str) -> Optional[Dict]:
+def find_task_by_name(name: str) -> Optional[Task]:
     for filename in os.listdir(CACHE_DIR):
         if filename.split("-")[0] == name:
             path = abspath(join(CACHE_DIR, filename, "task.json"))
@@ -559,6 +558,8 @@ def remove_task_by_name(name: str):
 
             if filename_task_name == name:
                 task = find_task_by_name(name)
+                if task is None:
+                    raise StartstopException("Failed to find task by name")
                 if is_task_running(task):
                     raise StartstopException(
                         "Cannot remove task while it's running.\n"
@@ -583,6 +584,8 @@ def remove_task_by_id(task_id: str):
 
                 if filename_task_id == task_id:
                     task = find_task_by_id(task_id)
+                    if task is None:
+                        raise StartstopException("Failed to find task by id")
                     if is_task_running(task):
                         raise StartstopException(
                             "Cannot remove task while it's running.\n"
@@ -632,8 +635,8 @@ def generate_id():
 
 
 async def run(
-    command: List[str], name: str = None, attached=False, split_output=False
-) -> Union[Task, Process]:
+    command: List[str], name: Optional[str] = None, attached=False, split_output=False
+) -> Optional[Union[Task, Process]]:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -657,9 +660,12 @@ async def run(
             shell_path = task["shell"]
             stdout_path = task["stdout"]
             stderr_path = task["stderr"]
+            logs_path = ""
         else:
             task = create_task_cache(task, split_output=split_output)
             shell_path = task["shell"]
+            stdout_path = ""
+            stderr_path = ""
             logs_path = task["logs"]
         if not attached:
             if split_output:
@@ -687,17 +693,20 @@ async def run(
             update_task_cache(task)
             return task
     if attached:
-        return await asyncio.create_subprocess_shell(*command)
+        return await asyncio.create_subprocess_shell(shlex.join(command))
+    return None
 
 
-async def run_attached(command: List[str], name: str = None):
+async def run_attached(command: List[str], name: Optional[str] = None):
     proc = await run(command, name=name, attached=True)
+    if not isinstance(proc, Process):
+        raise StartstopException("proc is not an instance of Process")
     for sig in [SIGINT, SIGTERM]:
         signal(sig, process_signal_handler(proc))
     await proc.wait()
 
 
-def start_task(task_id: str = None, name: str = None):
+def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -708,10 +717,12 @@ def start_task(task_id: str = None, name: str = None):
                     )
             else:
                 raise StartstopException(f"No task with name {name}")
-        else:
+        elif task_id is not None:
             task = find_task_by_id(task_id)
             if task is None:
                 raise StartstopException(f"No task with ID {task_id}")
+        else:
+            raise ValueError("Either task_id or name must be set")
 
         if task["name"] is not None:
             dir_name = f"{task['name']}-{task['id']}"
@@ -745,7 +756,7 @@ def start_task(task_id: str = None, name: str = None):
         update_task_cache(task)
 
 
-def stop_task(task_id: str = None, name: str = None):
+def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -754,10 +765,12 @@ def stop_task(task_id: str = None, name: str = None):
                     raise StartstopException(f"Task {name} is not running")
             else:
                 raise StartstopException(f"No task with name {name}")
-        else:
+        elif task_id is not None:
             task = find_task_by_id(task_id)
             if task is None:
                 raise StartstopException(f"No task with ID {task_id}")
+        else:
+            raise ValueError("Either task_id or name must be set")
 
     # We kill and busy wait outside the above file lock for better parallel performance
     os.kill(int(task["pid"]), SIGTERM)
@@ -792,6 +805,8 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
         if rm_all:
             remove_all_tasks()
         else:
+            if task_name_or_id is None:
+                raise ValueError("task_name_or_id is None")
             try:
                 task_id = str(int(task_name_or_id))
                 name = None
@@ -801,7 +816,7 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
 
             if task_id is not None:
                 remove_task_by_id(task_id)
-            else:
+            elif name is not None:
                 remove_task_by_name(name)
     except StartstopException as e:
         print_error(str(e))
@@ -809,11 +824,11 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
     return True
 
 
-def logs(task_name_or_id: Optional[str], follow=False, head=False):
+def logs(task_name_or_id: str, follow=False, head=False):
     def print_lines(lines):
         if isinstance(lines, list):
-            for l in lines:
-                stdout.buffer.write(l)
+            for line in lines:
+                stdout.buffer.write(line)
                 stdout.buffer.write("\n".encode())
         elif isinstance(lines, bytes):
             stdout.buffer.write(lines)
@@ -833,10 +848,12 @@ def logs(task_name_or_id: Optional[str], follow=False, head=False):
         task = find_task_by_id(task_id)
         if task is None:
             raise StartstopException(f"No task with ID {task_id}")
-    else:
+    elif name is not None:
         task = find_task_by_name(name)
         if task is None:
             raise StartstopException(f"No task with name {name}")
+    else:
+        raise ValueError("task_id and name are None")
 
     logs_path = task.get("logs")
     if logs_path is None:
@@ -1008,6 +1025,8 @@ def main():
                         "Only letters and underscore are allowed in task name"
                     )
             attached = option_args.get("a") or option_args.get("attached")
+            if command is None:
+                raise ValueError("command is None")
             if attached:
                 asyncio.run(run_attached(command, name=name))
             else:
@@ -1018,28 +1037,36 @@ def main():
             if rm_all is True:
                 rm(None, rm_all=rm_all)
             else:
+                if command is None:
+                    raise ValueError("command is None")
                 pool = ThreadPool(len(command))
                 results = pool.map(rm, command)
                 if not all(results):
                     exit(1)
 
         elif option == "start":
+            if command is None:
+                raise ValueError("command is None")
             pool = ThreadPool(len(command))
             results = pool.map(start, command)
             if not all(results):
                 exit(1)
 
         elif option == "stop":
+            if command is None:
+                raise ValueError("command is None")
             pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
                 exit(1)
 
         elif option == "ls":
-            ls_all = option_args.get("a") or option_args.get("all")
+            ls_all = bool(option_args.get("a") or option_args.get("all"))
             ls(ls_all=ls_all)
 
         elif option == "logs":
+            if command is None:
+                raise ValueError("command is None")
             if len(command) > 1:
                 raise StartstopException(
                     "A single task ID or name must be provided to 'logs'"

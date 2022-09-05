@@ -43,7 +43,7 @@ $ startstop rm mydjangoserver
 
 Download the script directly (recommended):
 ```
-curl https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop -o startstop
+curl https://github.com/yuriescl/startstop/releases/download/0.1.2/startstop -o startstop
 chmod +x startstop
 ./startstop
 ```
@@ -60,25 +60,7 @@ startstop  # or python -m startstop
 
 ### Environment
 ```
-poetry env use python3.7
+poetry env use python3.9
 poetry install
 poetry shell
 ```
-
-Todo:
-- add -q global flag
-- add some sort of execution log history to easily see logs
-- add --help
-- print --help when command is in invalid format
-- allow specifying cache dir
-- allow start/stop/rm non-parallel
-- test in pure Unix
-- what is user has no home dir?
-- add busy interval parameter used in busy loops
-- add timeout to stop(), and also maybe a -9 param to send kill -9
-- add JSON CLI input/output support
-- add --long to ls
-- add support for non-shell commands
-- logs behavior with output containing only a line break
-- allow 'ls' sorting
-- allow specifying number of lines in 'logs'

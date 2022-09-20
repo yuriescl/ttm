@@ -43,7 +43,7 @@ $ startstop rm mydjangoserver
 
 Download the script directly (recommended):
 ```
-curl https://github.com/yuriescl/startstop/blob/0.1.3/startstop.py -o startstop
+curl https://raw.githubusercontent.com/yuriescl/startstop/0.1.3/startstop.py -o startstop
 chmod +x startstop
 ./startstop
 ```

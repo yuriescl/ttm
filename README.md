@@ -28,7 +28,7 @@ $ startstop stop 1
 $ startstop rm 1
 ```
 
-Running Django server :
+Running Django server:
 ```
 $ startstop run --name mydjangoserver python manage.py runserver
 $ startstop rm mydjangoserver

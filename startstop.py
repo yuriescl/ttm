@@ -32,10 +32,15 @@ if version_info[0] < 3 or version_info[1] < 9:
 
 CACHE_DIR = Path.home() / ".startstop"
 os.makedirs(CACHE_DIR, exist_ok=True)
-LOCK_PATH = Path(CACHE_DIR / "lock")
+TMP_DIR = Path(f"/var/run/user/{str(os.getuid())}/startstop")
+os.makedirs(TMP_DIR, exist_ok=True)
+LOCK_FILE_NAME = "lock"
+LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
 LOCK_PATH.touch(exist_ok=True)
 
-VERSION = "0.1.0"
+RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
+
+VERSION = "0.1.3"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -460,26 +465,40 @@ def parse_args(
 # FILE OPERATIONS
 
 
-def create_task_cache(task: Task, split_output=False) -> Task:
+def get_task_label(task: Task):
     if task["name"] is not None:
-        dir_name = f"{task['name']}-{task['id']}"
+        return f"{task['name']}-{task['id']}"
     else:
-        dir_name = task["id"]
+        return task["id"]
+
+
+def parse_task_id_or_name(task_name_or_id: str) -> Tuple[Optional[str], Optional[str]]:
+    try:
+        task_id = str(int(task_name_or_id))
+        name = None
+    except (ValueError, TypeError):
+        task_id = None
+        name = task_name_or_id
+    return task_id, name
+
+
+def create_pidfile(task: Task):
+    if task.get("pid") is not None:
+        with open(TMP_DIR / f"{get_task_label(task)}.pid", "w") as f:
+            f.write(task["pid"])
+
+
+def create_task_cache(task: Task, split_output=False) -> Task:
+    dir_name = get_task_label(task)
     dir_path = CACHE_DIR / dir_name
     os.makedirs(dir_path, exist_ok=True)
     filepath = dir_path / "task.json"
     timestamp = datetime.now().strftime(TIMESTAMP_FMT)
-    shell_path = str(dir_path / task["id"])
-    try:
-        os.symlink("/bin/sh", shell_path)
-    except FileExistsError:
-        pass
     if split_output:
         stdout_path = dir_path / f"{dir_name}-{timestamp}.out"
         stderr_path = dir_path / f"{dir_name}-{timestamp}.err"
         task.update(
             {
-                "shell": str(shell_path),
                 "stdout": str(stdout_path),
                 "stderr": str(stderr_path),
                 "started_at": timestamp,
@@ -489,25 +508,27 @@ def create_task_cache(task: Task, split_output=False) -> Task:
         logs_path = dir_path / f"{dir_name}-{timestamp}.log"
         task.update(
             {
-                "shell": str(shell_path),
                 "logs": str(logs_path),
                 "started_at": timestamp,
             }
         )
     with open(filepath, "w") as f:
-        json.dump(task, f)
+        task_to_dump = dict(task)
+        task_to_dump.pop("pid", None)
+        json.dump(task_to_dump, f)
+    create_pidfile(task)
     return task
 
 
 def update_task_cache(task: Task):
-    if task["name"] is not None:
-        dir_name = f"{task['name']}-{task['id']}"
-    else:
-        dir_name = task["id"]
+    dir_name = get_task_label(task)
     dir_path = CACHE_DIR / dir_name
     filepath = dir_path / "task.json"
     with open(filepath, "w") as f:
-        json.dump(task, f)
+        task_to_dump = dict(task)
+        task_to_dump.pop("pid", None)
+        json.dump(task_to_dump, f)
+    create_pidfile(task)
 
 
 def is_task_running(task: Task) -> bool:
@@ -516,22 +537,32 @@ def is_task_running(task: Task) -> bool:
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(" ", 1)
         if task.get("pid") is not None and ps_pid == task["pid"]:
-            if cmdline.startswith(f"{task['shell']} -c"):
-                return True
+            return True
     return False
+
+
+def get_task_from_cache_file(cache_file_path: str):
+    with open(cache_file_path) as f:
+        task = json.load(f)
+    pidfile = TMP_DIR / f"{get_task_label(task)}.pid"
+    if pidfile.exists():
+        with open(pidfile, "r") as f:
+            task["pid"] = f.read()
+    return task
 
 
 def find_task_by_name(name: str) -> Optional[Task]:
     for filename in os.listdir(CACHE_DIR):
-        if filename.split("-")[0] == name:
+        if filename not in RESERVED_FILE_NAMES and filename.split("-")[0] == name:
             path = abspath(join(CACHE_DIR, filename, "task.json"))
-            with open(path) as f:
-                return json.load(f)
+            return get_task_from_cache_file(path)
     return None
 
 
 def find_task_by_id(task_id: str) -> Optional[Dict]:
     for filename in os.listdir(CACHE_DIR):
+        if filename in RESERVED_FILE_NAMES:
+            continue
         try:
             filename_split = filename.split("-")
             if len(filename_split) == 1:
@@ -540,8 +571,7 @@ def find_task_by_id(task_id: str) -> Optional[Dict]:
                 filename_task_id = filename_split[1]
             if filename_task_id == task_id:
                 path = abspath(join(CACHE_DIR, filename, "task.json"))
-                with open(path) as f:
-                    return json.load(f)
+                return get_task_from_cache_file(path)
         except IndexError:
             pass
     return None
@@ -657,13 +687,11 @@ async def run(
         }
         if split_output:
             task = create_task_cache(task, split_output=split_output)
-            shell_path = task["shell"]
             stdout_path = task["stdout"]
             stderr_path = task["stderr"]
             logs_path = ""
         else:
             task = create_task_cache(task, split_output=split_output)
-            shell_path = task["shell"]
             stdout_path = ""
             stderr_path = ""
             logs_path = task["logs"]
@@ -673,7 +701,6 @@ async def run(
                     with open(stderr_path, "wb") as err:
                         proc = Popen(
                             shlex.join(command),
-                            executable=shell_path,
                             shell=True,
                             start_new_session=True,
                             stdout=out,
@@ -683,7 +710,6 @@ async def run(
                 with open(logs_path, "wb") as output:
                     proc = Popen(
                         shlex.join(command),
-                        executable=shell_path,
                         shell=True,
                         start_new_session=True,
                         stdout=output,
@@ -729,7 +755,6 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
         else:
             dir_name = task["id"]
         dir_path = CACHE_DIR / dir_name
-        command = [task["shell"], "-c"] + task["command"]
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         if task.get("stdout") is not None:
             task["stdout"] = str(dir_path / f"{dir_name}-{timestamp}.out")
@@ -737,7 +762,8 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             with open(task["stdout"], "wb") as out:
                 with open(task["stderr"], "wb") as err:
                     proc = Popen(
-                        command,
+                        shlex.join(task["command"]),
+                        shell=True,
                         start_new_session=True,
                         stdout=out,
                         stderr=err,
@@ -746,7 +772,8 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             task["logs"] = str(dir_path / f"{dir_name}-{timestamp}.log")
             with open(task["logs"], "wb") as output:
                 proc = Popen(
-                    command,
+                    shlex.join(task["command"]),
+                    shell=True,
                     start_new_session=True,
                     stdout=output,
                     stderr=output,
@@ -785,17 +812,18 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
 def remove_all_tasks():
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
+            if filename in RESERVED_FILE_NAMES:
+                continue
             path = abspath(join(CACHE_DIR, filename, "task.json"))
             try:
-                with open(path) as f:
-                    task = json.load(f)
-                    if is_task_running(task):
-                        print_error(
-                            f"Cannot remove task with ID {task['id']} since it's running"
-                        )
-                    else:
-                        dir_path = abspath(join(CACHE_DIR, filename))
-                        rmtree(dir_path)
+                task = get_task_from_cache_file(path)
+                if is_task_running(task):
+                    print_error(
+                        f"Cannot remove task with ID {task['id']} since it's running"
+                    )
+                else:
+                    dir_path = abspath(join(CACHE_DIR, filename))
+                    rmtree(dir_path)
             except (NotADirectoryError, FileNotFoundError, ValueError):
                 pass
 
@@ -807,13 +835,7 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
         else:
             if task_name_or_id is None:
                 raise ValueError("task_name_or_id is None")
-            try:
-                task_id = str(int(task_name_or_id))
-                name = None
-            except (ValueError, TypeError):
-                task_id = None
-                name = task_name_or_id
-
+            task_id, name = parse_task_id_or_name(task_name_or_id)
             if task_id is not None:
                 remove_task_by_id(task_id)
             elif name is not None:
@@ -837,12 +859,8 @@ def logs(task_name_or_id: str, follow=False, head=False):
 
     if follow and head:
         raise StartstopException("--follow and --head cannot be used together")
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
+
+    task_id, name = parse_task_id_or_name(task_name_or_id)
 
     if task_id is not None:
         task = find_task_by_id(task_id)
@@ -881,12 +899,7 @@ def logs(task_name_or_id: str, follow=False, head=False):
 
 
 def start(task_name_or_id: str) -> bool:
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
+    task_id, name = parse_task_id_or_name(task_name_or_id)
 
     try:
         start_task(task_id=task_id, name=name)
@@ -897,12 +910,7 @@ def start(task_name_or_id: str) -> bool:
 
 
 def stop(task_name_or_id: str):
-    try:
-        task_id = str(int(task_name_or_id))
-        name = None
-    except (ValueError, TypeError):
-        task_id = None
-        name = task_name_or_id
+    task_id, name = parse_task_id_or_name(task_name_or_id)
 
     try:
         stop_task(task_id=task_id, name=name)
@@ -912,25 +920,35 @@ def stop(task_name_or_id: str):
         return False
 
 
-def ls(ls_all=False):
+def ls(ls_all=False, command: Optional[List[str]] = None):
     tasks = []
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
+            if filename in RESERVED_FILE_NAMES:
+                continue
             path = abspath(join(CACHE_DIR, filename, "task.json"))
+            force_list = False
+            if command:
+                for task_name_or_id in command:
+                    task_id, name = parse_task_id_or_name(task_name_or_id)
+                    filename_split = filename.split("-")
+                    if task_id in filename_split or name in filename_split:
+                        force_list = True
+                if not force_list:
+                    continue
             try:
-                with open(path) as f:
-                    task = json.load(f)
-                    task["started_at"] = datetime.strptime(
-                        task["started_at"], TIMESTAMP_FMT
-                    )
-                    if is_task_running(task):
-                        diff = datetime.now() - task["started_at"]
-                        task["uptime"] = format_seconds(int(diff.total_seconds()))
-                        tasks.append(task)
-                    elif ls_all:
-                        task["pid"] = "-"
-                        task["uptime"] = "-"
-                        tasks.append(task)
+                task = get_task_from_cache_file(path)
+                task["started_at"] = datetime.strptime(
+                    task["started_at"], TIMESTAMP_FMT
+                )
+                if is_task_running(task):
+                    diff = datetime.now() - task["started_at"]
+                    task["uptime"] = format_seconds(int(diff.total_seconds()))
+                    tasks.append(task)
+                elif ls_all or force_list:
+                    task["pid"] = "-"
+                    task["uptime"] = "-"
+                    tasks.append(task)
             except (NotADirectoryError, FileNotFoundError, ValueError):
                 pass
 
@@ -1062,7 +1080,12 @@ def main():
 
         elif option == "ls":
             ls_all = bool(option_args.get("a") or option_args.get("all"))
-            ls(ls_all=ls_all)
+            if command:
+                if ls_all:
+                    raise StartstopException(
+                        "-a/--all is not allowed when specific tasks are provided"
+                    )
+            ls(ls_all=ls_all, command=command)
 
         elif option == "logs":
             if command is None:

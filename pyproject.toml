@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "startstop"
 version = "0.2.1"
-description = "Tiny process manager for Linux, MacOS and Unix-like systems"
+description = "Tiny task manager for Linux, MacOS and Unix-like systems"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
 homepage = "https://github.com/yuriescl/startstop"

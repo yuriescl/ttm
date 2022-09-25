@@ -40,7 +40,7 @@ LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -1048,7 +1048,7 @@ def main():
                     )
             attached = option_args.get("a") or option_args.get("attached")
             if command is None:
-                raise ValueError("command is None")
+                raise StartstopException("A command must be provided")
             if attached:
                 asyncio.run(run_attached(command, name=name))
             else:
@@ -1060,7 +1060,7 @@ def main():
                 rm(None, rm_all=rm_all)
             else:
                 if command is None:
-                    raise ValueError("command is None")
+                    raise StartstopException("Task ID or name must be provided")
                 pool = ThreadPool(len(command))
                 results = pool.map(rm, command)
                 if not all(results):
@@ -1068,7 +1068,7 @@ def main():
 
         elif option == "start":
             if command is None:
-                raise ValueError("command is None")
+                raise StartstopException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
             results = pool.map(start, command)
             if not all(results):
@@ -1076,7 +1076,7 @@ def main():
 
         elif option == "stop":
             if command is None:
-                raise ValueError("command is None")
+                raise StartstopException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
@@ -1093,7 +1093,7 @@ def main():
 
         elif option == "logs":
             if command is None:
-                raise ValueError("command is None")
+                raise StartstopException("Task ID or name must be provided")
             if len(command) > 1:
                 raise StartstopException(
                     "A single task ID or name must be provided to 'logs'"

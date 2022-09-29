@@ -40,7 +40,7 @@ LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "startstop"
-version = "0.2.1"
+version = "0.3.0"
 description = "Tiny task manager for Linux, MacOS and Unix-like systems"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
@@ -13,12 +13,11 @@ packages = [
 startstop = 'startstop:main'
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.8"
 
 [tool.poetry.dev-dependencies]
 black = "^22.3.0"
 flake8 = "^4.0.1"
-ipython = "^7.32.0"
 mypy = "^0.971"
 pynvim = "^0.4.3"
 

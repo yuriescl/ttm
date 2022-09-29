@@ -1,6 +1,23 @@
 Tiny task manager for Linux, MacOS and Unix-like systems.  
 Written as a single Python script (download [here](https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop)).
 
+## Installation
+
+Download the script directly (recommended):
+```
+curl https://raw.githubusercontent.com/yuriescl/startstop/0.3.0/startstop.py -o startstop
+chmod +x startstop
+./startstop
+```
+
+### Alternative installation methods
+
+#### Installing through pip
+```
+pip install startstop
+startstop  # or python -m startstop
+```
+
 Requirements:
 - `python` (3.8+)
 - `ps` (usually available by default)
@@ -37,23 +54,6 @@ To stop it, run:
 startstop stop mydjangoserver
 $ startstop logs mydjangoserver
 $ startstop rm mydjangoserver
-```
-
-## Installation
-
-Download the script directly (recommended):
-```
-curl https://raw.githubusercontent.com/yuriescl/startstop/0.1.3/startstop.py -o startstop
-chmod +x startstop
-./startstop
-```
-
-### Alternative installation methods
-
-#### Installing through pip
-```
-pip install startstop
-startstop  # or python -m startstop
 ```
 
 ## Development

@@ -40,7 +40,7 @@ LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -701,8 +701,6 @@ async def run(
                     with open(stderr_path, "wb") as err:
                         proc = Popen(
                             shlex.join(command),
-                            shell=True,
-                            start_new_session=True,
                             stdout=out,
                             stderr=err,
                         )
@@ -710,8 +708,6 @@ async def run(
                 with open(logs_path, "wb") as output:
                     proc = Popen(
                         shlex.join(command),
-                        shell=True,
-                        start_new_session=True,
                         stdout=output,
                         stderr=output,
                     )
@@ -763,8 +759,6 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                 with open(task["stderr"], "wb") as err:
                     proc = Popen(
                         shlex.join(task["command"]),
-                        shell=True,
-                        start_new_session=True,
                         stdout=out,
                         stderr=err,
                     )
@@ -773,8 +767,6 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             with open(task["logs"], "wb") as output:
                 proc = Popen(
                     shlex.join(task["command"]),
-                    shell=True,
-                    start_new_session=True,
                     stdout=output,
                     stderr=output,
                 )

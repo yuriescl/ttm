@@ -26,8 +26,8 @@ import time
 from time import sleep
 from typing import Dict, List, Optional, Tuple, Union
 
-if version_info[0] < 3 or version_info[1] < 9:
-    raise Exception("Python 3.9+ is required to run this program")
+if version_info[0] < 3 or version_info[1] < 8:
+    raise Exception("Python 3.8+ is required to run this program")
 
 
 CACHE_DIR = Path.home() / ".startstop"

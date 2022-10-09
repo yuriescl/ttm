@@ -40,7 +40,7 @@ LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -304,6 +304,7 @@ class bcolors:
     OKCYAN = "\033[96m"
     OKGREEN = "\033[92m"
     WARNING = "\033[93m"
+    LIGHTGREY = "\033[0;37m"
     FAIL = "\033[91m"
     ENDC = "\033[0m"
     BOLD = "\033[1m"
@@ -322,7 +323,7 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
         if arg in ["v", "verbose", "version"]:
             return False
     elif option == "run":
-        if arg in ["a", "attach", "split-output"]:
+        if arg in ["s", "shell", "split-output"]:
             return False
         if arg in ["n", "name"]:
             return True
@@ -665,7 +666,10 @@ def generate_id():
 
 
 async def run(
-    command: List[str], name: Optional[str] = None, attached=False, split_output=False
+    command: List[str],
+    name: Optional[str] = None,
+    split_output=False,
+    shell=False,
 ) -> Optional[Union[Task, Process]]:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
@@ -684,6 +688,7 @@ async def run(
             "id": generate_id(),
             "name": name,
             "command": command,
+            "shell": shell,
         }
         if split_output:
             task = create_task_cache(task, split_output=split_output)
@@ -695,37 +700,27 @@ async def run(
             stdout_path = ""
             stderr_path = ""
             logs_path = task["logs"]
-        if not attached:
-            if split_output:
-                with open(stdout_path, "wb") as out:
-                    with open(stderr_path, "wb") as err:
-                        proc = Popen(
-                            shlex.join(command),
-                            stdout=out,
-                            stderr=err,
-                        )
-            else:
-                with open(logs_path, "wb") as output:
+        if split_output:
+            with open(stdout_path, "wb") as out:
+                with open(stderr_path, "wb") as err:
                     proc = Popen(
-                        shlex.join(command),
-                        stdout=output,
-                        stderr=output,
+                        command if not shell else shlex.join(command),
+                        shell=shell,
+                        stdout=out,
+                        stderr=err,
                     )
-            task["pid"] = str(proc.pid)
-            update_task_cache(task)
-            return task
-    if attached:
-        return await asyncio.create_subprocess_shell(shlex.join(command))
+        else:
+            with open(logs_path, "wb") as output:
+                proc = Popen(
+                    command if not shell else shlex.join(command),
+                    shell=shell,
+                    stdout=output,
+                    stderr=output,
+                )
+        task["pid"] = str(proc.pid)
+        update_task_cache(task)
+        return task
     return None
-
-
-async def run_attached(command: List[str], name: Optional[str] = None):
-    proc = await run(command, name=name, attached=True)
-    if not isinstance(proc, Process):
-        raise StartstopException("proc is not an instance of Process")
-    for sig in [SIGINT, SIGTERM]:
-        signal(sig, process_signal_handler(proc))
-    await proc.wait()
 
 
 def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
@@ -758,7 +753,12 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             with open(task["stdout"], "wb") as out:
                 with open(task["stderr"], "wb") as err:
                     proc = Popen(
-                        shlex.join(task["command"]),
+                        (
+                            task["command"]
+                            if not task["shell"]
+                            else shlex.join(task["command"])
+                        ),
+                        shell=task["shell"],
                         stdout=out,
                         stderr=err,
                     )
@@ -766,7 +766,12 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             task["logs"] = str(dir_path / f"{dir_name}-{timestamp}.log")
             with open(task["logs"], "wb") as output:
                 proc = Popen(
-                    shlex.join(task["command"]),
+                    (
+                        task["command"]
+                        if not task["shell"]
+                        else shlex.join(task["command"])
+                    ),
+                    shell=task["shell"],
                     stdout=output,
                     stderr=output,
                 )
@@ -871,21 +876,27 @@ def logs(task_name_or_id: str, follow=False, head=False):
             "Task was created using --split-output, use 'stdout' or 'stderr' instead of 'logs'"
         )
 
+    line_count = 15
+
     if not head and follow:
         with open(logs_path, "rb") as file:
-            print_lines(Tailer(file).tail())
+            print_grey(f"{logs_path} last {line_count} lines:")
+            print_lines(Tailer(file).tail(lines=line_count))
 
     with open(logs_path, "rb") as file:
         if head:
-            print_lines(Tailer(file).head())
+            print_grey(f"{logs_path} first {line_count} lines:")
+            print_lines(Tailer(file).head(lines=line_count))
         elif follow:
+            print_grey(f"{logs_path} followed tail:")
             for line in Tailer(file, end=True).follow():
                 if line is None:
                     time.sleep(0.01)
                     continue
                 print_lines(line)
         else:
-            print_lines(Tailer(file).tail())
+            print_grey(f"{logs_path} last {line_count} lines:")
+            print_lines(Tailer(file).tail(lines=line_count))
 
         print_lines([])
 
@@ -1006,6 +1017,10 @@ def print_error(msg: str, *args, **kwargs):
     print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}", *args, **kwargs)
 
 
+def print_grey(msg: str, *args, **kwargs):
+    print(f"{bcolors.LIGHTGREY}{msg}{bcolors.ENDC}", *args, **kwargs)
+
+
 def print_warning(msg: str, *args, **kwargs):
     if "file" not in kwargs:
         kwargs["file"] = stderr
@@ -1038,13 +1053,10 @@ def main():
                     raise StartstopException(
                         "Only letters and underscore are allowed in task name"
                     )
-            attached = option_args.get("a") or option_args.get("attached")
+            shell = bool(option_args.get("s") or option_args.get("shell"))
             if command is None:
                 raise StartstopException("A command must be provided")
-            if attached:
-                asyncio.run(run_attached(command, name=name))
-            else:
-                asyncio.run(run(command, name=name))
+            asyncio.run(run(command, name=name, shell=shell))
 
         elif option == "rm":
             rm_all = option_args.get("a") or option_args.get("all")

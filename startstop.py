@@ -21,7 +21,8 @@ import shlex
 from shutil import get_terminal_size, rmtree
 from signal import SIGINT, SIGTERM, signal
 from subprocess import Popen, check_output
-from sys import argv, exit, stdout, stderr, version_info
+from sys import argv, exit, stderr, stdout, version_info
+import tempfile
 import time
 from time import sleep
 from typing import Dict, List, Optional, Tuple, Union
@@ -32,15 +33,13 @@ if version_info[0] < 3 or version_info[1] < 8:
 
 CACHE_DIR = Path.home() / ".startstop"
 os.makedirs(CACHE_DIR, exist_ok=True)
-TMP_DIR = Path(f"/var/run/user/{str(os.getuid())}/startstop")
-os.makedirs(TMP_DIR, exist_ok=True)
 LOCK_FILE_NAME = "lock"
 LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
 LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.6.0"
+VERSION = "0.8.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -485,7 +484,10 @@ def parse_task_id_or_name(task_name_or_id: str) -> Tuple[Optional[str], Optional
 
 def create_pidfile(task: Task):
     if task.get("pid") is not None:
-        with open(TMP_DIR / f"{get_task_label(task)}.pid", "w") as f:
+        if task.get("pidfile"):
+            Path(task["pidfile"]).unlink(missing_ok=True)
+        fh, task["pidfile"] = tempfile.mkstemp()
+        with os.fdopen(fh, "w") as f:
             f.write(task["pid"])
 
 
@@ -513,11 +515,11 @@ def create_task_cache(task: Task, split_output=False) -> Task:
                 "started_at": timestamp,
             }
         )
+    create_pidfile(task)
     with open(filepath, "w") as f:
         task_to_dump = dict(task)
         task_to_dump.pop("pid", None)
         json.dump(task_to_dump, f)
-    create_pidfile(task)
     return task
 
 
@@ -525,11 +527,11 @@ def update_task_cache(task: Task):
     dir_name = get_task_label(task)
     dir_path = CACHE_DIR / dir_name
     filepath = dir_path / "task.json"
+    create_pidfile(task)
     with open(filepath, "w") as f:
         task_to_dump = dict(task)
         task_to_dump.pop("pid", None)
         json.dump(task_to_dump, f)
-    create_pidfile(task)
 
 
 def is_task_running(task: Task) -> bool:
@@ -545,9 +547,8 @@ def is_task_running(task: Task) -> bool:
 def get_task_from_cache_file(cache_file_path: str):
     with open(cache_file_path) as f:
         task = json.load(f)
-    pidfile = TMP_DIR / f"{get_task_label(task)}.pid"
-    if pidfile.exists():
-        with open(pidfile, "r") as f:
+    if task.get("pidfile") and Path(task["pidfile"]).exists():
+        with open(task["pidfile"], "r") as f:
             task["pid"] = f.read()
     return task
 
@@ -687,6 +688,7 @@ async def run(
         task = {
             "id": generate_id(),
             "name": name,
+            "cwd": os.getcwd(),
             "command": command,
             "shell": shell,
         }
@@ -706,6 +708,7 @@ async def run(
                     proc = Popen(
                         command if not shell else shlex.join(command),
                         shell=shell,
+                        cwd=task["cwd"],
                         stdout=out,
                         stderr=err,
                     )
@@ -714,6 +717,7 @@ async def run(
                 proc = Popen(
                     command if not shell else shlex.join(command),
                     shell=shell,
+                    cwd=task["cwd"],
                     stdout=output,
                     stderr=output,
                 )
@@ -759,6 +763,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                             else shlex.join(task["command"])
                         ),
                         shell=task["shell"],
+                        cwd=task["cwd"],
                         stdout=out,
                         stderr=err,
                     )
@@ -772,6 +777,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                         else shlex.join(task["command"])
                     ),
                     shell=task["shell"],
+                    cwd=task["cwd"],
                     stdout=output,
                     stderr=output,
                 )

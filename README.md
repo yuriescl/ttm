@@ -5,7 +5,7 @@ Written as a single Python script (download [here](https://github.com/yuriescl/s
 
 Download the script directly (recommended):
 ```
-curl https://raw.githubusercontent.com/yuriescl/startstop/0.8.0/startstop.py -o startstop
+curl https://raw.githubusercontent.com/yuriescl/startstop/0.9.0/startstop.py -o startstop
 chmod +x startstop
 ./startstop
 ```

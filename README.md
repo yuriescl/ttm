@@ -1,5 +1,5 @@
 Tiny task manager for Linux, MacOS and Unix-like systems.  
-Written as a single Python script (download [here](https://github.com/yuriescl/startstop/releases/download/0.1.0/startstop)).
+Written as a single Python script (download [here](https://github.com/yuriescl/startstop/releases/download/0.9.0/startstop)).
 
 ## Installation
 

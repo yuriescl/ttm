@@ -1,21 +1,21 @@
 Tiny task manager for Linux, MacOS and Unix-like systems.  
-Written as a single Python script (download [here](https://github.com/yuriescl/startstop/releases/download/0.9.0/startstop)).
+Written as a single Python script (download [here](https://raw.githubusercontent.com/yuriescl/ttm/dev/ttm.py)).
 
 ## Installation
 
 Download the script directly (recommended):
 ```
-curl https://raw.githubusercontent.com/yuriescl/startstop/0.9.0/startstop.py -o startstop
-chmod +x startstop
-./startstop
+curl https://raw.githubusercontent.com/yuriescl/ttm/dev/ttm.py -o ttm
+chmod +x ttm
+./ttm
 ```
 
 ### Alternative installation methods
 
 #### Installing through pip
 ```
-pip install startstop
-startstop  # or python -m startstop
+pip install ttm
+ttm  # or python -m ttm
 ```
 
 Requirements:
@@ -37,23 +37,23 @@ Alternative to:
 
 Running a script:
 ```
-$ startstop run ./backup-database.sh --output /backups/database.sql
-$ startstop ls
+$ ttm run ./backup-database.sh --output /backups/database.sql
+$ ttm ls
 ID   NAME COMMAND                                              UPTIME PID    
 1    -    ./backup-database.sh --output /backups/database.sql  2s     742537 
-$ startstop stop 1
-$ startstop rm 1
+$ ttm stop 1
+$ ttm rm 1
 ```
 
 Running Django server:
 ```
-$ startstop run --name mydjangoserver python manage.py runserver
-$ startstop rm mydjangoserver
+$ ttm run --name mydjangoserver python manage.py runserver
+$ ttm rm mydjangoserver
 Cannot remove task while it's running.
 To stop it, run:
-startstop stop mydjangoserver
-$ startstop logs mydjangoserver
-$ startstop rm mydjangoserver
+ttm stop mydjangoserver
+$ ttm logs mydjangoserver
+$ ttm rm mydjangoserver
 ```
 
 ## Development

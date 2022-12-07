@@ -1,16 +1,16 @@
 [tool.poetry]
-name = "startstop"
-version = "0.9.0"
+name = "ttm"
+version = "0.10.0"
 description = "Tiny task manager for Linux, MacOS and Unix-like systems"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"
-homepage = "https://github.com/yuriescl/startstop"
+homepage = "https://github.com/yuriescl/ttm"
 packages = [
-    { include = "startstop.py" }
+    { include = "ttm.py" }
 ]
 
 [tool.poetry.scripts]
-startstop = 'startstop:main'
+ttm = 'ttm:main'
 
 [tool.poetry.dependencies]
 python = "^3.8"

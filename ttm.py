@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-# startstop
+# ttm
 # MIT License
 # Copyright (c) 2022 Yuri Escalianti <yuriescl@gmail.com>
-# Homepage: https://github.com/yuriescl/startstop
+# Homepage: https://github.com/yuriescl/ttm
 
 import asyncio
 from asyncio.subprocess import Process
@@ -31,7 +31,7 @@ if version_info[0] < 3 or version_info[1] < 8:
     raise Exception("Python 3.8+ is required to run this program")
 
 
-CACHE_DIR = Path.home() / ".startstop"
+CACHE_DIR = Path.home() / ".ttm"
 os.makedirs(CACHE_DIR, exist_ok=True)
 LOCK_FILE_NAME = "lock"
 LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
@@ -46,7 +46,7 @@ TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 Task = dict
 
 
-class StartstopException(Exception):
+class TtmException(Exception):
     pass
 
 
@@ -340,7 +340,7 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     elif option == "logs":
         if arg in ["f", "follow", "head"]:
             return False
-    raise StartstopException(f"Unrecognized argument {dashes(arg)}{arg}")
+    raise TtmException(f"Unrecognized argument {dashes(arg)}{arg}")
 
 
 def is_value_next(args: List[str], pos: int) -> bool:
@@ -366,7 +366,7 @@ def parse_args(
             current_arg = current_arg[2:]
             if arg_requires_value(current_arg, option):
                 if not is_value_next(args, pos):
-                    raise StartstopException(
+                    raise TtmException(
                         f"Argument --{current_arg} requires a value"
                     )
                 global_args[current_arg] = args[pos + 1]
@@ -381,7 +381,7 @@ def parse_args(
             if len(current_arg) == 1:
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise StartstopException(
+                        raise TtmException(
                             f"Argument -{current_arg} requires a value"
                         )
                     global_args[current_arg] = args[pos + 1]
@@ -394,14 +394,14 @@ def parse_args(
             else:
                 for letter in current_arg:
                     if arg_requires_value(letter, option):
-                        raise StartstopException(
+                        raise TtmException(
                             f"Argument -{letter} cannot be grouped with other arguments"
                         )
                     global_args[letter] = True
                     pos += 1
                     continue
         else:
-            raise StartstopException(f"Unrecognized option {current_arg}")
+            raise TtmException(f"Unrecognized option {current_arg}")
         pos += 1
 
     option_args: Dict[str, Union[str, bool]] = {}
@@ -409,7 +409,7 @@ def parse_args(
 
     if option is not None:
         if pos >= len(args) and option not in ["ls"]:
-            raise StartstopException(f"Missing arguments for option '{option}'")
+            raise TtmException(f"Missing arguments for option '{option}'")
         while True:
             if pos >= len(args):
                 break
@@ -418,7 +418,7 @@ def parse_args(
                 current_arg = current_arg[2:]
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise StartstopException(
+                        raise TtmException(
                             f"Argument --{current_arg} requires a value"
                         )
                     option_args[current_arg] = args[pos + 1]
@@ -433,7 +433,7 @@ def parse_args(
                 if len(current_arg) == 1:
                     if arg_requires_value(current_arg, option):
                         if not is_value_next(args, pos):
-                            raise StartstopException(
+                            raise TtmException(
                                 f"Argument -{current_arg} requires a value"
                             )
                         option_args[current_arg] = args[pos + 1]
@@ -448,7 +448,7 @@ def parse_args(
                         if arg_requires_value(letter, option) and not is_value_next(
                             args, pos
                         ):
-                            raise StartstopException(
+                            raise TtmException(
                                 f"Argument -{letter} cannot be grouped with other arguments"
                             )
                         option_args[letter] = True
@@ -591,17 +591,17 @@ def remove_task_by_name(name: str):
             if filename_task_name == name:
                 task = find_task_by_name(name)
                 if task is None:
-                    raise StartstopException("Failed to find task by name")
+                    raise TtmException("Failed to find task by name")
                 if is_task_running(task):
-                    raise StartstopException(
+                    raise TtmException(
                         "Cannot remove task while it's running.\n"
                         "To stop it, run:\n"
-                        f"startstop stop {name}"
+                        f"ttm stop {name}"
                     )
                 dir_path = abspath(join(CACHE_DIR, filename))
                 rmtree(dir_path)
                 return
-        raise StartstopException(f"No task with name {name}")
+        raise TtmException(f"No task with name {name}")
 
 
 def remove_task_by_id(task_id: str):
@@ -617,19 +617,19 @@ def remove_task_by_id(task_id: str):
                 if filename_task_id == task_id:
                     task = find_task_by_id(task_id)
                     if task is None:
-                        raise StartstopException("Failed to find task by id")
+                        raise TtmException("Failed to find task by id")
                     if is_task_running(task):
-                        raise StartstopException(
+                        raise TtmException(
                             "Cannot remove task while it's running.\n"
                             "To stop it, run:\n"
-                            f"startstop stop {task_id}"
+                            f"ttm stop {task_id}"
                         )
                     dir_path = abspath(join(CACHE_DIR, filename))
                     rmtree(dir_path)
                     return
             except IndexError:
                 pass
-        raise StartstopException(f"No task with ID {task_id}")
+        raise TtmException(f"No task with ID {task_id}")
 
 
 def process_signal_handler(process: Process):
@@ -659,7 +659,7 @@ def generate_id():
         str_i = str(i)
         if str_i not in existing_ids:
             return str_i
-    raise StartstopException("Failed to generated task ID")
+    raise TtmException("Failed to generated task ID")
 
 
 #############
@@ -677,13 +677,13 @@ async def run(
             task = find_task_by_name(name)
             if task:
                 if is_task_running(task):
-                    raise StartstopException(
+                    raise TtmException(
                         f"Task {name} is already running with PID {task['pid']}"
                     )
-                raise StartstopException(
+                raise TtmException(
                     f"Task {name} already exists and it's not running.\n"
                     "To remove it, run:\n"
-                    f"startstop rm {name}"
+                    f"ttm rm {name}"
                 )
         task = {
             "id": generate_id(),
@@ -733,15 +733,15 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             task = find_task_by_name(name)
             if task is not None:
                 if is_task_running(task):
-                    raise StartstopException(
+                    raise TtmException(
                         f"Task {name} is already running with PID {task['pid']}"
                     )
             else:
-                raise StartstopException(f"No task with name {name}")
+                raise TtmException(f"No task with name {name}")
         elif task_id is not None:
             task = find_task_by_id(task_id)
             if task is None:
-                raise StartstopException(f"No task with ID {task_id}")
+                raise TtmException(f"No task with ID {task_id}")
         else:
             raise ValueError("Either task_id or name must be set")
 
@@ -792,13 +792,13 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
             task = find_task_by_name(name)
             if task is not None:
                 if not is_task_running(task):
-                    raise StartstopException(f"Task {name} is not running")
+                    raise TtmException(f"Task {name} is not running")
             else:
-                raise StartstopException(f"No task with name {name}")
+                raise TtmException(f"No task with name {name}")
         elif task_id is not None:
             task = find_task_by_id(task_id)
             if task is None:
-                raise StartstopException(f"No task with ID {task_id}")
+                raise TtmException(f"No task with ID {task_id}")
         else:
             raise ValueError("Either task_id or name must be set")
 
@@ -843,7 +843,7 @@ def rm(task_name_or_id: Optional[str], rm_all=False) -> bool:
                 remove_task_by_id(task_id)
             elif name is not None:
                 remove_task_by_name(name)
-    except StartstopException as e:
+    except TtmException as e:
         print_error(str(e))
         return False
     return True
@@ -861,24 +861,24 @@ def logs(task_name_or_id: str, follow=False, head=False):
         stdout.buffer.flush()
 
     if follow and head:
-        raise StartstopException("--follow and --head cannot be used together")
+        raise TtmException("--follow and --head cannot be used together")
 
     task_id, name = parse_task_id_or_name(task_name_or_id)
 
     if task_id is not None:
         task = find_task_by_id(task_id)
         if task is None:
-            raise StartstopException(f"No task with ID {task_id}")
+            raise TtmException(f"No task with ID {task_id}")
     elif name is not None:
         task = find_task_by_name(name)
         if task is None:
-            raise StartstopException(f"No task with name {name}")
+            raise TtmException(f"No task with name {name}")
     else:
         raise ValueError("task_id and name are None")
 
     logs_path = task.get("logs")
     if logs_path is None:
-        raise StartstopException(
+        raise TtmException(
             "Task was created using --split-output, use 'stdout' or 'stderr' instead of 'logs'"
         )
 
@@ -913,7 +913,7 @@ def start(task_name_or_id: str) -> bool:
     try:
         start_task(task_id=task_id, name=name)
         return True
-    except StartstopException as e:
+    except TtmException as e:
         print_error(str(e))
         return False
 
@@ -924,7 +924,7 @@ def stop(task_name_or_id: str):
     try:
         stop_task(task_id=task_id, name=name)
         return True
-    except StartstopException as e:
+    except TtmException as e:
         print_error(str(e))
         return False
 
@@ -1056,12 +1056,12 @@ def main():
             name = option_args.get("n") or option_args.get("name") or None
             if name is not None:
                 if not re.match(r"^[a-zA-Z_]+$", name):
-                    raise StartstopException(
+                    raise TtmException(
                         "Only letters and underscore are allowed in task name"
                     )
             shell = bool(option_args.get("s") or option_args.get("shell"))
             if command is None:
-                raise StartstopException("A command must be provided")
+                raise TtmException("A command must be provided")
             asyncio.run(run(command, name=name, shell=shell))
 
         elif option == "rm":
@@ -1070,7 +1070,7 @@ def main():
                 rm(None, rm_all=rm_all)
             else:
                 if command is None:
-                    raise StartstopException("Task ID or name must be provided")
+                    raise TtmException("Task ID or name must be provided")
                 pool = ThreadPool(len(command))
                 results = pool.map(rm, command)
                 if not all(results):
@@ -1078,7 +1078,7 @@ def main():
 
         elif option == "start":
             if command is None:
-                raise StartstopException("Task ID or name must be provided")
+                raise TtmException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
             results = pool.map(start, command)
             if not all(results):
@@ -1086,7 +1086,7 @@ def main():
 
         elif option == "stop":
             if command is None:
-                raise StartstopException("Task ID or name must be provided")
+                raise TtmException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
@@ -1096,23 +1096,23 @@ def main():
             ls_all = bool(option_args.get("a") or option_args.get("all"))
             if command:
                 if ls_all:
-                    raise StartstopException(
+                    raise TtmException(
                         "-a/--all is not allowed when specific tasks are provided"
                     )
             ls(ls_all=ls_all, command=command)
 
         elif option == "logs":
             if command is None:
-                raise StartstopException("Task ID or name must be provided")
+                raise TtmException("Task ID or name must be provided")
             if len(command) > 1:
-                raise StartstopException(
+                raise TtmException(
                     "A single task ID or name must be provided to 'logs'"
                 )
             follow = option_args.get("f") or option_args.get("follow") or False
             head = option_args.get("head") or False
             logs(command[0], follow=follow, head=head)
 
-    except StartstopException as e:
+    except TtmException as e:
         print_error(str(e))
         exit(1)
 

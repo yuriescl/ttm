@@ -31,11 +31,9 @@ if version_info[0] < 3 or version_info[1] < 8:
     raise Exception("Python 3.8+ is required to run this program")
 
 
-CACHE_DIR = Path.home() / ".ttm"
-os.makedirs(CACHE_DIR, exist_ok=True)
 LOCK_FILE_NAME = "lock"
+CACHE_DIR = Path.home() / ".ttm"
 LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
-LOCK_PATH.touch(exist_ok=True)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
@@ -318,6 +316,10 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     def dashes(a: str):
         return "-" if len(a) == 1 else "--"
 
+    common_args_require_value = ["cache-dir"]
+
+    if arg in common_args_require_value:
+        return True
     if option is None:
         if arg in ["v", "verbose", "version"]:
             return False
@@ -464,6 +466,16 @@ def parse_args(
 ##################
 # FILE OPERATIONS
 
+
+def init_cache_dir(cache_dir: Optional[Union[str,Path]]):
+    global CACHE_DIR
+    global LOCK_PATH
+    if cache_dir is not None:
+        CACHE_DIR = Path(cache_dir)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    LOCK_FILE_NAME = "lock"
+    LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
+    LOCK_PATH.touch(exist_ok=True)
 
 def get_task_label(task: Task):
     if task["name"] is not None:
@@ -802,7 +814,10 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
                 raise TtmException(f"No task with name {name}")
         elif task_id is not None:
             task = find_task_by_id(task_id)
-            if task is None:
+            if task is not None:
+                if not is_task_running(task):
+                    raise TtmException(f"Task with ID {task_id} is not running")
+            else:
                 raise TtmException(f"No task with ID {task_id}")
         else:
             raise ValueError("Either task_id or name must be set")
@@ -1051,6 +1066,8 @@ def main():
             print_error("No option provided. Use -h for help.")
             exit(1)
         global_args, option, option_args, command = parse_args(argv)
+
+        init_cache_dir(global_args.get("cache-dir"))
 
         if option is None:
             version = global_args.get("version")

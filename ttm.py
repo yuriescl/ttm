@@ -37,7 +37,7 @@ LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -591,6 +591,11 @@ def find_task_by_id(task_id: str) -> Optional[Dict]:
     return None
 
 
+def delete_pidfile(task: Task):
+    if task.get("pidfile"):
+        Path(task["pidfile"]).unlink(missing_ok=True)
+
+
 def remove_task_by_name(name: str):
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
@@ -612,6 +617,7 @@ def remove_task_by_name(name: str):
                     )
                 dir_path = abspath(join(CACHE_DIR, filename))
                 rmtree(dir_path)
+                delete_pidfile(task)
                 return
         raise TtmException(f"No task with name {name}")
 
@@ -638,6 +644,7 @@ def remove_task_by_id(task_id: str):
                         )
                     dir_path = abspath(join(CACHE_DIR, filename))
                     rmtree(dir_path)
+                    delete_pidfile(task)
                     return
             except IndexError:
                 pass
@@ -736,7 +743,6 @@ async def run(
         task["pid"] = str(proc.pid)
         update_task_cache(task)
         return task
-    return None
 
 
 def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
@@ -828,6 +834,7 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
         # TODO add timeout
         with AtomicOpen(LOCK_PATH):
             if not is_task_running(task):
+                delete_pidfile(task)
                 break
         sleep(BUSY_LOOP_INTERVAL)
 

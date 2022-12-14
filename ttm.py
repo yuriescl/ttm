@@ -740,7 +740,12 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                 raise TtmException(f"No task with name {name}")
         elif task_id is not None:
             task = find_task_by_id(task_id)
-            if task is None:
+            if task is not None:
+                if is_task_running(task):
+                    raise TtmException(
+                        f"Task with ID {task_id} is already running with PID {task['pid']}"
+                    )
+            else:
                 raise TtmException(f"No task with ID {task_id}")
         else:
             raise ValueError("Either task_id or name must be set")

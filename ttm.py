@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 # ttm
+# Tiny task manager for Linux, MacOS and Unix-like systems.
+# Written as a single Python script.
 # MIT License
 # Copyright (c) 2022 Yuri Escalianti <yuriescl@gmail.com>
 # Homepage: https://github.com/yuriescl/ttm
@@ -368,9 +370,7 @@ def parse_args(
             current_arg = current_arg[2:]
             if arg_requires_value(current_arg, option):
                 if not is_value_next(args, pos):
-                    raise TtmException(
-                        f"Argument --{current_arg} requires a value"
-                    )
+                    raise TtmException(f"Argument --{current_arg} requires a value")
                 global_args[current_arg] = args[pos + 1]
                 pos += 2
                 continue
@@ -383,9 +383,7 @@ def parse_args(
             if len(current_arg) == 1:
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise TtmException(
-                            f"Argument -{current_arg} requires a value"
-                        )
+                        raise TtmException(f"Argument -{current_arg} requires a value")
                     global_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -420,9 +418,7 @@ def parse_args(
                 current_arg = current_arg[2:]
                 if arg_requires_value(current_arg, option):
                     if not is_value_next(args, pos):
-                        raise TtmException(
-                            f"Argument --{current_arg} requires a value"
-                        )
+                        raise TtmException(f"Argument --{current_arg} requires a value")
                     option_args[current_arg] = args[pos + 1]
                     pos += 2
                     continue
@@ -467,7 +463,7 @@ def parse_args(
 # FILE OPERATIONS
 
 
-def init_cache_dir(cache_dir: Optional[Union[str,Path]]):
+def init_cache_dir(cache_dir: Optional[Union[str, Path]]):
     global CACHE_DIR
     global LOCK_PATH
     if cache_dir is not None:
@@ -476,6 +472,7 @@ def init_cache_dir(cache_dir: Optional[Union[str,Path]]):
     LOCK_FILE_NAME = "lock"
     LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
     LOCK_PATH.touch(exist_ok=True)
+
 
 def get_task_label(task: Task):
     if task["name"] is not None:
@@ -725,7 +722,7 @@ async def run(
             with open(stdout_path, "wb") as out:
                 with open(stderr_path, "wb") as err:
                     proc = Popen(
-                        command if not shell else shlex.join(command),
+                        build_cmd(command, shell),
                         shell=shell,
                         cwd=task["cwd"],
                         stdout=out,
@@ -734,7 +731,7 @@ async def run(
         else:
             with open(logs_path, "wb") as output:
                 proc = Popen(
-                    command if not shell else shlex.join(command),
+                    build_cmd(command, shell),
                     shell=shell,
                     cwd=task["cwd"],
                     stdout=output,
@@ -780,11 +777,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             with open(task["stdout"], "wb") as out:
                 with open(task["stderr"], "wb") as err:
                     proc = Popen(
-                        (
-                            task["command"]
-                            if not task["shell"]
-                            else shlex.join(task["command"])
-                        ),
+                        build_cmd(task["command"], task["shell"]),
                         shell=task["shell"],
                         cwd=task["cwd"],
                         stdout=out,
@@ -794,11 +787,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
             task["logs"] = str(dir_path / f"{dir_name}-{timestamp}.log")
             with open(task["logs"], "wb") as output:
                 proc = Popen(
-                    (
-                        task["command"]
-                        if not task["shell"]
-                        else shlex.join(task["command"])
-                    ),
+                    build_cmd(task["command"], task["shell"]),
                     shell=task["shell"],
                     cwd=task["cwd"],
                     stdout=output,
@@ -1016,6 +1005,16 @@ def ls(ls_all=False, command: Optional[List[str]] = None):
 
 #######
 # MISC
+
+
+def build_cmd(command: List[str], shell: bool):
+    if shell:
+        if len(command) == 1:
+            return command[0]
+        else:
+            return shlex.join(command)
+    else:
+        return command
 
 
 def format_seconds(seconds, long=False):

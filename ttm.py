@@ -30,7 +30,7 @@ from time import sleep
 from typing import Dict, List, Optional, Tuple, Union
 
 if version_info[0] < 3 or version_info[1] < 8:
-    raise Exception("Python 3.8+ is required to run this program")
+    raise Exception("Python >=3.8 is required to run this program")
 
 
 LOCK_FILE_NAME = "lock"

@@ -19,7 +19,7 @@ ttm  # or python -m ttm
 ```
 
 Requirements:
-- `python` (3.8+)
+- `python` >=3.8
 - `ps` (usually available by default)
 
 Features:

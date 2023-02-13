@@ -318,12 +318,12 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     def dashes(a: str):
         return "-" if len(a) == 1 else "--"
 
-    common_args_require_value = ["cache-dir"]
-
-    if arg in common_args_require_value:
+    if arg in ["cache-dir"]:
         return True
+    if arg in ["h", "help"]:
+        return False
     if option is None:
-        if arg in ["v", "verbose", "version"]:
+        if arg in ["version"]:
             return False
     elif option == "run":
         if arg in ["s", "shell", "split-output"]:
@@ -837,9 +837,7 @@ def remove_all_tasks():
             try:
                 task = get_task_from_cache_file(path)
                 if is_task_running(task):
-                    print_error(
-                        f"Cannot remove task with ID {task['id']} since it's running"
-                    )
+                    print_error(f"Task {task['id']}: cannot remove while it's running")
                 else:
                     dir_path = abspath(join(CACHE_DIR, filename))
                     rmtree(dir_path)
@@ -1063,6 +1061,100 @@ def print_success(msg: str, *args, **kwargs):
     print(f"{bcolors.OKGREEN}{msg}{bcolors.ENDC}", *args, **kwargs)
 
 
+def print_help():
+    print()
+    print("Usage:  ttm [OPTIONS] COMMAND")
+    print()
+    print("Tiny task manager for Linux, MacOS and Unix-like systems")
+    print()
+    print("Options:")
+
+    print(
+        f"      --cache-dir   Use a custom cache directory instead of the default {CACHE_DIR}"
+    )
+    print("  -h, --help        Display help")
+    print("      --version     Display program version")
+    print()
+    print("Commands:")
+    print("  logs            Display logs of a task")
+    print("  ls              List tasks")
+    print("  rm              Remove tasks")
+    print("  run             Run a new task")
+    print("  start           Start tasks")
+    print("  stop            Stop tasks")
+
+
+def print_help_logs():
+    print()
+    print("Usage:  ttm logs TASK")
+    print()
+    print("Display logs of a task.")
+    print("TASK can be a task ID or a task name.")
+    print()
+
+
+def print_help_ls():
+    print()
+    print("Usage:  ttm ls [OPTIONS]")
+    print()
+    print("List tasks")
+    print()
+    print("Options:")
+    print("  -a, --all        List all tasks, including stopped")
+    print()
+
+
+def print_help_rm():
+    print()
+    print("Usage:  ttm rm [OPTIONS] [TASK]")
+    print()
+    print("Remove tasks.")
+    print("TASK can be a task ID or a task name.")
+    print()
+    print("Options:")
+    print("  -a, --all        Remove all tasks")
+    print()
+
+
+def print_help_run():
+    print()
+    print("Usage:  ttm run [OPTIONS] COMMAND")
+    print()
+    print("Run a new task")
+    print()
+    print("Options:")
+    print("  -s, --shell        Run COMMAND in a shell")
+    print()
+    print("Examples:")
+    print("  ttm run /path/to/my/program arg1 arg2")
+    print("  ttm run -s 'echo test >> myfile'")
+    print()
+
+
+def print_help_start():
+    print()
+    print("Usage:  ttm start TASK")
+    print()
+    print("Start a task")
+    print()
+    print("Examples:")
+    print("  ttm start 3")
+    print("  ttm start mytaskname")
+    print()
+
+
+def print_help_stop():
+    print()
+    print("Usage:  ttm stop TASK")
+    print()
+    print("Stop a task")
+    print()
+    print("Examples:")
+    print("  ttm stop 3")
+    print("  ttm stop mytaskname")
+    print()
+
+
 def main():
     for sig in [SIGINT, SIGTERM]:
         signal(sig, signal_handler)
@@ -1076,23 +1168,43 @@ def main():
         init_cache_dir(global_args.get("cache-dir"))
 
         if option is None:
-            version = global_args.get("version")
-            if version:
+            if global_args.get("version"):
                 print(VERSION)
                 return
-        elif option == "run":
-            name = option_args.get("n") or option_args.get("name") or None
-            if name is not None:
-                if not re.match(r"^[a-zA-Z_]+$", name):
-                    raise TtmException(
-                        "Only letters and underscore are allowed in task name"
-                    )
-            shell = bool(option_args.get("s") or option_args.get("shell"))
+            if global_args.get("h") or global_args.get("help"):
+                print_help()
+                return
+
+        elif option == "logs":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_logs()
+                return
             if command is None:
-                raise TtmException("A command must be provided")
-            asyncio.run(run(command, name=name, shell=shell))
+                raise TtmException("Task ID or name must be provided")
+            if len(command) > 1:
+                raise TtmException(
+                    "A single task ID or name must be provided to 'logs'"
+                )
+            follow = option_args.get("f") or option_args.get("follow") or False
+            head = option_args.get("head") or False
+            logs(command[0], follow=follow, head=head)
+
+        elif option == "ls":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_ls()
+                return
+            ls_all = bool(option_args.get("a") or option_args.get("all"))
+            if command:
+                if ls_all:
+                    raise TtmException(
+                        "-a/--all is not allowed when specific tasks are provided"
+                    )
+            ls(ls_all=ls_all, command=command)
 
         elif option == "rm":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_rm()
+                return
             rm_all = option_args.get("a") or option_args.get("all")
             if rm_all is True:
                 rm(None, rm_all=rm_all)
@@ -1104,7 +1216,25 @@ def main():
                 if not all(results):
                     exit(1)
 
+        elif option == "run":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_run()
+                return
+            name = option_args.get("n") or option_args.get("name") or None
+            if name is not None:
+                if not re.match(r"^[a-zA-Z_]+$", name):
+                    raise TtmException(
+                        "Only letters and underscore are allowed in task name"
+                    )
+            shell = bool(option_args.get("s") or option_args.get("shell"))
+            if command is None:
+                raise TtmException("A command must be provided")
+            asyncio.run(run(command, name=name, shell=shell))
+
         elif option == "start":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_start()
+                return
             if command is None:
                 raise TtmException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
@@ -1113,32 +1243,15 @@ def main():
                 exit(1)
 
         elif option == "stop":
+            if option_args.get("h") or option_args.get("help"):
+                print_help_stop()
+                return
             if command is None:
                 raise TtmException("Task ID or name must be provided")
             pool = ThreadPool(len(command))
             results = pool.map(stop, command)
             if not all(results):
                 exit(1)
-
-        elif option == "ls":
-            ls_all = bool(option_args.get("a") or option_args.get("all"))
-            if command:
-                if ls_all:
-                    raise TtmException(
-                        "-a/--all is not allowed when specific tasks are provided"
-                    )
-            ls(ls_all=ls_all, command=command)
-
-        elif option == "logs":
-            if command is None:
-                raise TtmException("Task ID or name must be provided")
-            if len(command) > 1:
-                raise TtmException(
-                    "A single task ID or name must be provided to 'logs'"
-                )
-            follow = option_args.get("f") or option_args.get("follow") or False
-            head = option_args.get("head") or False
-            logs(command[0], follow=follow, head=head)
 
     except TtmException as e:
         print_error(str(e))

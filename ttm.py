@@ -7,8 +7,6 @@
 # Copyright (c) 2022 Yuri Escalianti <yuriescl@gmail.com>
 # Homepage: https://github.com/yuriescl/ttm
 
-import asyncio
-from asyncio.subprocess import Process
 from datetime import datetime
 from fcntl import LOCK_EX, LOCK_UN, lockf
 import io
@@ -648,19 +646,6 @@ def remove_task_by_id(task_id: str):
         raise TtmException(f"No task with ID {task_id}")
 
 
-def process_signal_handler(process: Process):
-    def wrapper(signum, frame):
-        process.send_signal(signum)
-        if signum == SIGINT:
-            print("Interrupted", file=stderr)
-            exit(1)
-        if signum == SIGTERM:
-            print("Terminated", file=stderr)
-            exit(1)
-
-    return wrapper
-
-
 def generate_id():
     existing_ids = []
     for filename in os.listdir(CACHE_DIR):
@@ -682,12 +667,12 @@ def generate_id():
 # OPERATIONS
 
 
-async def run(
+def run(
     command: List[str],
     name: Optional[str] = None,
     split_output=False,
     shell=False,
-) -> Optional[Union[Task, Process]]:
+) -> Task:
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -1229,7 +1214,7 @@ def main():
             shell = bool(option_args.get("s") or option_args.get("shell"))
             if command is None:
                 raise TtmException("A command must be provided")
-            asyncio.run(run(command, name=name, shell=shell))
+            run(command, name=name, shell=shell)
 
         elif option == "start":
             if option_args.get("h") or option_args.get("help"):

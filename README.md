@@ -60,7 +60,7 @@ $ ttm rm mydjangoserver
 
 ### Environment
 ```
-poetry env use python3.9
+poetry env use python3.8
 poetry install
 poetry shell
 ```

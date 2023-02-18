@@ -19,7 +19,7 @@ from pathlib import Path
 import re
 import shlex
 from shutil import get_terminal_size, rmtree
-from signal import SIGINT, SIGTERM, signal
+from signal import SIGINT, SIGTERM, Signals, signal
 from subprocess import Popen, check_output
 from sys import argv, exit, stderr, stdout, version_info
 import tempfile
@@ -40,6 +40,8 @@ RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 VERSION = "0.13.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
+
+TERMINATE = False
 
 Task = dict
 
@@ -331,7 +333,7 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     elif option == "start":
         pass
     elif option == "stop":
-        if arg in ["k"]:
+        if arg in ["k"] + signals_list():
             return False
     elif option == "rm":
         if arg in ["a", "all"]:
@@ -542,7 +544,9 @@ def update_task_cache(task: Task):
 
 
 def is_task_running(task: Task) -> bool:
-    output = check_output(["ps", "-u", str(os.getuid()), "-o", "pid,args"])
+    output = check_output(
+        ["ps", "-u", str(os.getuid()), "-o", "pid,args"], start_new_session=True
+    )
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(" ", 1)
@@ -712,6 +716,7 @@ def run(
                         cwd=task["cwd"],
                         stdout=out,
                         stderr=err,
+                        start_new_session=True,
                     )
         else:
             with open(logs_path, "wb") as output:
@@ -721,6 +726,7 @@ def run(
                     cwd=task["cwd"],
                     stdout=output,
                     stderr=output,
+                    start_new_session=True,
                 )
         task["pid"] = str(proc.pid)
         update_task_cache(task)
@@ -767,6 +773,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                         cwd=task["cwd"],
                         stdout=out,
                         stderr=err,
+                        start_new_session=True,
                     )
         else:
             task["logs"] = str(dir_path / f"{dir_name}-{timestamp}.log")
@@ -777,13 +784,16 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                     cwd=task["cwd"],
                     stdout=output,
                     stderr=output,
+                    start_new_session=True,
                 )
         task["pid"] = str(proc.pid)
         task["started_at"] = timestamp
         update_task_cache(task)
 
 
-def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
+def stop_task(
+    task_id: Optional[str] = None, name: Optional[str] = None, sig: int = SIGTERM
+):
     with AtomicOpen(LOCK_PATH):
         if name is not None:
             task = find_task_by_name(name)
@@ -803,7 +813,7 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
             raise ValueError("Either task_id or name must be set")
 
     # We kill and busy wait outside the above file lock for better parallel performance
-    os.kill(int(task["pid"]), SIGTERM)
+    os.kill(int(task["pid"]), sig)
     while True:
         # TODO add timeout
         with AtomicOpen(LOCK_PATH):
@@ -816,6 +826,8 @@ def stop_task(task_id: Optional[str] = None, name: Optional[str] = None):
 def remove_all_tasks():
     with AtomicOpen(LOCK_PATH):
         for filename in os.listdir(CACHE_DIR):
+            if TERMINATE:
+                return
             if filename in RESERVED_FILE_NAMES:
                 continue
             path = abspath(join(CACHE_DIR, filename, "task.json"))
@@ -917,11 +929,11 @@ def start(task_name_or_id: str) -> bool:
         return False
 
 
-def stop(task_name_or_id: str):
+def stop(task_name_or_id: str, sig: int):
     task_id, name = parse_task_id_or_name(task_name_or_id)
 
     try:
-        stop_task(task_id=task_id, name=name)
+        stop_task(task_id=task_id, name=name, sig=sig)
         return True
     except TtmException as e:
         print_error(str(e))
@@ -1020,10 +1032,13 @@ def format_seconds(seconds, long=False):
 
 
 def signal_handler(signum, frame):
-    if signum == SIGINT:
-        exit(1)
-    if signum == SIGTERM:
-        exit(1)
+    global TERMINATE
+    if signum in [SIGINT, SIGTERM]:
+        TERMINATE = True
+
+
+def signals_list():
+    return [str(sig.value) for sig in Signals]
 
 
 def print_error(msg: str, *args, **kwargs):
@@ -1233,8 +1248,19 @@ def main():
                 return
             if command is None:
                 raise TtmException("Task ID or name must be provided")
+            stop_sig = None
+            for sig in signals_list():
+                if option_args.get(sig):
+                    if stop_sig is not None:
+                        raise TtmException("Only one signal can be provided")
+                    stop_sig = int(sig)
+            if stop_sig is None:
+                stop_sig = SIGTERM
             pool = ThreadPool(len(command))
-            results = pool.map(stop, command)
+            arg_list = []
+            for c in command:
+                arg_list.append((c, stop_sig))
+            results = pool.starmap(stop, arg_list)
             if not all(results):
                 exit(1)
 

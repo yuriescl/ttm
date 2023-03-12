@@ -1,5 +1,5 @@
 Tiny task manager for Linux, MacOS and Unix-like systems.  
-Written as a single Python script (download [here](https://raw.githubusercontent.com/yuriescl/ttm/dev/ttm.py)).
+Written as a single Python script (download <a href="https://raw.githubusercontent.com/yuriescl/ttm/dev/ttm.py" download>here</a>).
 
 ## Installation
 

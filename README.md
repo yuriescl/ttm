@@ -1,8 +1,7 @@
 Tiny task manager for Linux, MacOS and Unix-like systems.  
 Written as a single Python script.
 
-![output](https://user-images.githubusercontent.com/26092447/224555851-275c66a2-1679-401a-8ca7-a4057406fc77.gif)
-
+<img src="https://user-images.githubusercontent.com/26092447/224555851-275c66a2-1679-401a-8ca7-a4057406fc77.gif" width="350">
 
 ## Installation
 

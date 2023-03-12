@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ttm"
-version = "0.13.0"
+version = "0.14.0"
 description = "Tiny task manager for Linux, MacOS and Unix-like systems"
 authors = ["Yuri Escalianti <yuriescl@gmail.com>"]
 license = "MIT License"

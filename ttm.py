@@ -19,8 +19,8 @@ from pathlib import Path
 import re
 import shlex
 from shutil import get_terminal_size, rmtree
-from signal import SIGINT, SIGTERM, Signals, signal
-from subprocess import Popen, check_output
+from signal import SIGINT, SIGKILL, SIGTERM, Signals, signal
+from subprocess import DEVNULL, Popen, check_output
 from sys import argv, exit, stderr, stdout, version_info
 import tempfile
 import time
@@ -37,7 +37,7 @@ LOCK_PATH = Path(CACHE_DIR / LOCK_FILE_NAME)
 
 RESERVED_FILE_NAMES = [LOCK_FILE_NAME]
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 BUSY_LOOP_INTERVAL = 0.1  # seconds
 TIMESTAMP_FMT = "%Y%m%d%H%M%S"
 
@@ -333,7 +333,7 @@ def arg_requires_value(arg: str, option: Optional[str] = None) -> bool:
     elif option == "start":
         pass
     elif option == "stop":
-        if arg in ["k"] + signals_list():
+        if arg in ["k", "kill"] + signals_list():
             return False
     elif option == "rm":
         if arg in ["a", "all"]:
@@ -544,9 +544,7 @@ def update_task_cache(task: Task):
 
 
 def is_task_running(task: Task) -> bool:
-    output = check_output(
-        ["ps", "-u", str(os.getuid()), "-o", "pid,args"], start_new_session=True
-    )
+    output = check_output(["ps", "-ax", "-o", "pid,args"], start_new_session=True)
     for line in output.splitlines():
         decoded = line.decode().strip()
         ps_pid, cmdline = decoded.split(" ", 1)
@@ -667,6 +665,24 @@ def generate_id():
     raise TtmException("Failed to generated task ID")
 
 
+def get_child_pids(parent_pid: int):
+    output = check_output(["ps", "-ax", "-o", "pid,ppid"], start_new_session=True)
+    ppid = str(parent_pid)
+    child_pids = []
+    for line in output.splitlines():
+        decoded = line.decode().strip()
+        ps_child_pid, ps_ppid = decoded.split(None, 1)
+        if ps_ppid == ppid:
+            child_pids.append(int(ps_child_pid))
+    return child_pids
+
+
+def kill_recursively(pid: int, sig: int):
+    for child_pid in get_child_pids(pid):
+        kill_recursively(child_pid, sig)
+    os.kill(pid, sig)
+
+
 #############
 # OPERATIONS
 
@@ -714,6 +730,7 @@ def run(
                         build_cmd(command, shell),
                         shell=shell,
                         cwd=task["cwd"],
+                        stdin=DEVNULL,
                         stdout=out,
                         stderr=err,
                         start_new_session=True,
@@ -724,6 +741,7 @@ def run(
                     build_cmd(command, shell),
                     shell=shell,
                     cwd=task["cwd"],
+                    stdin=DEVNULL,
                     stdout=output,
                     stderr=output,
                     start_new_session=True,
@@ -771,6 +789,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                         build_cmd(task["command"], task["shell"]),
                         shell=task["shell"],
                         cwd=task["cwd"],
+                        stdin=DEVNULL,
                         stdout=out,
                         stderr=err,
                         start_new_session=True,
@@ -782,6 +801,7 @@ def start_task(task_id: Optional[str] = None, name: Optional[str] = None):
                     build_cmd(task["command"], task["shell"]),
                     shell=task["shell"],
                     cwd=task["cwd"],
+                    stdin=DEVNULL,
                     stdout=output,
                     stderr=output,
                     start_new_session=True,
@@ -813,7 +833,7 @@ def stop_task(
             raise ValueError("Either task_id or name must be set")
 
     # We kill and busy wait outside the above file lock for better parallel performance
-    os.kill(int(task["pid"]), sig)
+    kill_recursively(int(task["pid"]), sig)
     while True:
         # TODO add timeout
         with AtomicOpen(LOCK_PATH):
@@ -1149,9 +1169,21 @@ def print_help_stop():
     print()
     print("Stop a task")
     print()
+    print("Options:")
+    print("  -k, --kill        Send a SIGKILL signal instead of the default SIGTERM.")
+    print("                    Equivalent to -9.")
+    print("  -SIG              Send a specific signal instead of the default SIGTERM")
+    print()
     print("Examples:")
     print("  ttm stop 3")
     print("  ttm stop mytaskname")
+    print("  ttm stop --kill my_hanged_task")
+    print()
+    print("  # Send a SIGINT signal to a task")
+    print("  ttm stop -2 my_interruptable_task")
+    print()
+    print("  # Send a SIGTERM signal to a task")
+    print("  ttm stop -9 my_hanged_task")
     print()
 
 
@@ -1254,6 +1286,12 @@ def main():
                     if stop_sig is not None:
                         raise TtmException("Only one signal can be provided")
                     stop_sig = int(sig)
+            if option_args.get("k") or option_args.get("kill"):
+                if stop_sig is not None:
+                    raise TtmException(
+                        "-k/--kill cannot be used when a signal is provided"
+                    )
+                stop_sig = SIGKILL
             if stop_sig is None:
                 stop_sig = SIGTERM
             pool = ThreadPool(len(command))
